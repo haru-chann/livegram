@@ -1,0 +1,19 @@
+# Compiled files and logs
+*.log
+*.tmp
+node_modules/
+
+# Cloudflare Workers
+.wrangler/
+dist/
+
+# Gemini/Antigravity Artifacts and Context
+.gemini/
+brain/
+implementation_plan.md
+task.md
+walkthrough.md
+
+# OS specific files
+.DS_Store
+Thumbs.db
