@@ -559,9 +559,9 @@ async function handleMessage(msg, env, ctx) {
             await sendMessage(botToken, chatId, statusText, { parse_mode: 'MarkdownV2', disable_web_page_preview: true });
             return;
         } else if (isAdmin && command === '/userlist') {
-            await sendUserList(botToken, chatId, env.D1_DB, ctx.bot_id);
+            await sendUserList(botToken, chatId, env.D1, ctx.bot_id);
         } else if (isAdmin && command === '/debug_messages') {
-            await debugMessages(botToken, chatId, env.D1_DB, ctx.bot_id);
+            await debugMessages(botToken, chatId, env.D1, ctx.bot_id);
         } else if (isAdmin && command === '/block' && msg.reply_to_message?.message_id) {
             let targetId;
 
@@ -733,7 +733,7 @@ async function handleMessage(msg, env, ctx) {
             console.log(`D1 SELECT messages for admin_msg_id=${refId} bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
         } catch (err) {
             console.error(`Database query error for admin_msg_id=${refId}: ${err.message}`);
-            await sendErrorToAdmin(botToken, adminId, `Database query error for admin_msg_id=${refId}: ${err.message}`);
+            await sendErrorToAdmin(env, ctx, `Database query error for admin_msg_id=${refId}: ${err.message}`);
             return;
         }
 
@@ -772,12 +772,12 @@ async function handleMessage(msg, env, ctx) {
         }
 
         if (!userId || (userMsgId && isNaN(userMsgId))) {
-            await sendErrorToAdmin(botToken, adminId, `Invalid data for reply: user_id=${userId}, user_msg_id=${userMsgId}, admin_msg_id=${refId}, message_type=${msg.text ? 'text' : msg.sticker ? 'sticker' : msg.photo ? 'photo' : msg.animation ? 'animation' : msg.video ? 'video' : msg.document ? 'document' : 'unknown'}`);
+            await sendErrorToAdmin(env, ctx, `Invalid data for reply: user_id=${userId}, user_msg_id=${userMsgId}, admin_msg_id=${refId}, message_type=${msg.text ? 'text' : msg.sticker ? 'sticker' : msg.photo ? 'photo' : msg.animation ? 'animation' : msg.video ? 'video' : msg.document ? 'document' : 'unknown'}`);
             return;
         }
 
         if (userId.toString() === adminId) {
-            await sendErrorToAdmin(botToken, adminId, `Cannot reply to self (admin_id=${adminId}), admin_msg_id=${refId}`);
+            await sendErrorToAdmin(env, ctx, `Cannot reply to self (admin_id=${adminId}), admin_msg_id=${refId}`);
             return;
         }
 
@@ -1234,7 +1234,7 @@ async function sendUserList(botToken, chatId, db, botId) {
         console.log(`D1 SELECT users, Userlist took ${Date.now() - startTime}ms`);
     } catch (err) {
         console.error(`Userlist Error: ${err.message}`);
-        await sendErrorToAdmin(botToken, chatId, `Failed to fetch user list: ${err.message}`);
+        await sendErrorToAdmin(env, ctx, `Failed to fetch user list: ${err.message}`);
     }
 }
 
@@ -1264,7 +1264,7 @@ async function debugMessages(botToken, chatId, db, botId) {
         console.log(`D1 SELECT messages, Debug messages took ${Date.now() - startTime}ms`);
     } catch (err) {
         console.error(`Debug Messages Error: ${err.message}`);
-        await sendErrorToAdmin(botToken, chatId, `Failed to fetch messages: ${err.message}`);
+        await sendErrorToAdmin(env, ctx, `Failed to fetch messages: ${err.message}`);
     }
 }
 
@@ -1379,8 +1379,9 @@ async function sendMedia(token, chatId, msg, options = {}) {
 }
 
 function escapeMarkdown(text) {
-    if (!text) return '';
-    return text.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+    if (text === null || text === undefined) return '';
+    const str = typeof text === 'string' ? text : String(text);
+    return str.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
 
 async function sendMessage(token, chatId, text, options = {}) {
