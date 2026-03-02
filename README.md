@@ -90,7 +90,7 @@ Add these variables to your Worker's `Settings > Variables`:
 ### 4. Required KV & D1 Bindings
 Ensure your Worker is bound to the following:
 - **D1 Database**: Bound as `D1`.
-- **KV Namespace**: Bound as `livegram`.
+- **KV Namespace**: Bound as `KV`.
 
 ### 5. Deployment & Webhook Setup
 

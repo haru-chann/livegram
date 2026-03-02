@@ -44,7 +44,7 @@ export default {
             const update = await request.json();
             if (update.message) {
                 // Support forwarding from Supergroups if linked
-                const channelId = await env.livegram.get(`bot:${ctx.bot_id}:config:channel_id`);
+                const channelId = await env.KV.get(`bot:${ctx.bot_id}:config:channel_id`);
                 if (channelId && update.message.chat.id.toString() === channelId && !update.message.from.is_bot) {
                     await handleChannelPost(update.message, env, ctx);
                 } else {
@@ -90,11 +90,11 @@ async function handleMessage(msg, env, ctx) {
     const broadcastKey = isAdmin ? `bot:${ctx.bot_id}:broadcast:${adminId}` : null;
 
     const [rateDataStr, confirmationMsgId, blockedCheck, setupStateStr, broadcastState] = await Promise.all([
-        env.livegram.get(rateKey),
-        !isAdmin ? env.livegram.get(confirmationKey) : Promise.resolve(null),
+        env.KV.get(rateKey),
+        !isAdmin ? env.KV.get(confirmationKey) : Promise.resolve(null),
         !isAdmin ? env.D1.prepare('SELECT 1 FROM blocked_users WHERE user_id = ? AND bot_id = ?').bind(userId, ctx.bot_id).first() : Promise.resolve(null),
-        isAdmin ? env.livegram.get(setupKey) : Promise.resolve(null),
-        isAdmin ? env.livegram.get(broadcastKey) : Promise.resolve(null)
+        isAdmin ? env.KV.get(setupKey) : Promise.resolve(null),
+        isAdmin ? env.KV.get(broadcastKey) : Promise.resolve(null)
     ]);
 
     // Universal Cancel (Admin only)
@@ -104,7 +104,7 @@ async function handleMessage(msg, env, ctx) {
         if (broadcastState) keysToDelete.push(broadcastKey);
 
         if (keysToDelete.length > 0) {
-            await Promise.all(keysToDelete.map(k => env.livegram.delete(k)));
+            await Promise.all(keysToDelete.map(k => env.KV.delete(k)));
             await sendMessage(botToken, chatId, '❌ All active processes (setup/broadcast) have been cancelled.');
         } else {
             await sendMessage(botToken, chatId, 'No active setup or broadcast to cancel.');
@@ -119,7 +119,7 @@ async function handleMessage(msg, env, ctx) {
         } catch (err) {
             console.error(`Failed to delete confirmation ${confirmationMsgId}: ${err.message}`);
         }
-        await env.livegram.delete(confirmationKey);
+        await env.KV.delete(confirmationKey);
     }
 
     // Block check (D1)
@@ -141,7 +141,7 @@ async function handleMessage(msg, env, ctx) {
             await sendMessage(botToken, chatId, '⚠️ Please wait before sending more messages.');
             return;
         }
-        await env.livegram.put(rateKey, JSON.stringify(rateData), { expirationTtl: 60 });
+        await env.KV.put(rateKey, JSON.stringify(rateData), { expirationTtl: 60 });
     }
 
     // Quick-Reply Shortcut (!.) Handler (Admin only)
@@ -150,7 +150,7 @@ async function handleMessage(msg, env, ctx) {
         const msgText = msg.text || msg.caption || '';
         if (msgText.startsWith(shortcutPrefix)) {
             const lastTargetKey = `bot:${ctx.bot_id}:last_target:${adminId}`;
-            const lastTargetId = await env.livegram.get(lastTargetKey);
+            const lastTargetId = await env.KV.get(lastTargetKey);
 
             if (!lastTargetId) {
                 await sendMessage(botToken, chatId, '❌ No last target found. Reply to a user first to set one.');
@@ -198,7 +198,7 @@ async function handleMessage(msg, env, ctx) {
                     setupState.targetCount = count;
                     setupState.messages = [];
                     setupState.type = 'welcome_collect';
-                    await env.livegram.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
+                    await env.KV.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
                     await sendMessage(botToken, chatId, `Step 1: Send the first message (Text, Photo, Sticker, GIF, etc.)`);
                 } else {
                     await sendMessage(botToken, chatId, 'Please send 1 or 2.');
@@ -226,14 +226,14 @@ async function handleMessage(msg, env, ctx) {
                     setupState.messages.push(msgData);
                     if (setupState.messages.length < setupState.targetCount) {
                         setupState.step++;
-                        await env.livegram.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
+                        await env.KV.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
                         await sendMessage(botToken, chatId, `Step 2: Send the second message (Text, Photo, Sticker, GIF, etc.)`);
                     } else {
-                        await env.livegram.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
+                        await env.KV.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
 
                         // Full Preview Flow
                         await sendMessage(botToken, chatId, '✨ *Previewing your new welcome sequence:*', { parse_mode: 'MarkdownV2' });
-                        const buttonConfig = JSON.parse(await env.livegram.get(`bot:${ctx.bot_id}:config:buttons`) || 'null');
+                        const buttonConfig = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || 'null');
 
                         for (let i = 0; i < setupState.messages.length; i++) {
                             const item = setupState.messages[i];
@@ -297,8 +297,8 @@ async function handleMessage(msg, env, ctx) {
                 }
 
                 if (buttons.length > 0) {
-                    await env.livegram.put(`bot:${ctx.bot_id}:config:buttons`, JSON.stringify(buttons));
-                    await env.livegram.delete(setupKey);
+                    await env.KV.put(`bot:${ctx.bot_id}:config:buttons`, JSON.stringify(buttons));
+                    await env.KV.delete(setupKey);
                     await sendMessage(botToken, chatId, `✅ ${buttons.length} buttons updated successfully!`);
                 } else {
                     await sendMessage(botToken, chatId, '❌ Invalid format. Please send buttons in `Label | Link` format, one per line.');
@@ -311,8 +311,8 @@ async function handleMessage(msg, env, ctx) {
                     from_chat_id: chatId,
                     message_id: msg.message_id
                 };
-                await env.livegram.put(setupState.id, JSON.stringify(broadcastData), { expirationTtl: 3600 });
-                await env.livegram.delete(setupKey);
+                await env.KV.put(setupState.id, JSON.stringify(broadcastData), { expirationTtl: 3600 });
+                await env.KV.delete(setupKey);
 
                 await sendMessage(botToken, chatId, '📋 *Global Broadcast Preview:*', { parse_mode: 'MarkdownV2' });
                 await copyMessage(botToken, chatId, chatId, msg.message_id, {
@@ -337,8 +337,8 @@ async function handleMessage(msg, env, ctx) {
                 }
 
                 if (channelId) {
-                    await env.livegram.put(`bot:${ctx.bot_id}:config:channel_id`, channelId);
-                    await env.livegram.delete(setupKey);
+                    await env.KV.put(`bot:${ctx.bot_id}:config:channel_id`, channelId);
+                    await env.KV.delete(setupKey);
                     await sendMessage(botToken, chatId, `✅ Channel linked successfully! ID: ${channelId}\nMake sure the bot is an admin in that channel.`);
                 } else {
                     await sendMessage(botToken, chatId, '❌ Invalid channel. Please forward a message from the channel or send the correct ID.');
@@ -364,7 +364,7 @@ async function handleMessage(msg, env, ctx) {
                         .bind(token, userId, botInfo.username, secretRef, 'pending', Math.floor(Date.now() / 1000))
                         .run();
 
-                    await env.livegram.delete(setupKey || `bot:${ctx.bot_id}:setup:${userId}`);
+                    await env.KV.delete(setupKey || `bot:${ctx.bot_id}:setup:${userId}`);
                     await sendMessage(botToken, chatId, `✅ Request sent! Your bot @${botInfo.username} is now pending approval from the Super Admin.`);
 
                     // Notify Super Admin on Main Bot
@@ -394,7 +394,7 @@ async function handleMessage(msg, env, ctx) {
         const command = fullCommand.split(/\s+/)[0].toLowerCase().split('@')[0];
 
         if (command === '/clone') {
-            await env.livegram.put(setupKey || `bot:${ctx.bot_id}:setup:${userId}`, JSON.stringify({ type: 'clone_collect' }), { expirationTtl: 600 });
+            await env.KV.put(setupKey || `bot:${ctx.bot_id}:setup:${userId}`, JSON.stringify({ type: 'clone_collect' }), { expirationTtl: 600 });
             const message = "To connect a bot, you should follow these two steps:\n\n1. Open @BotFather and create a new bot.\n2. You'll get a token (e.g. 12345:6789ABCDEF) — copy-paste it to this chat.\n\nWarning! Don't connect bots already used by other services.";
             await sendMessage(botToken, chatId, message);
             return;
@@ -466,8 +466,8 @@ async function handleMessage(msg, env, ctx) {
         }
 
         if (command === '/start') {
-            const welcomeConfig = JSON.parse(await env.livegram.get(`bot:${ctx.bot_id}:config:welcome`) || 'null');
-            const buttonConfig = JSON.parse(await env.livegram.get(`bot:${ctx.bot_id}:config:buttons`) || 'null');
+            const welcomeConfig = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:welcome`) || 'null');
+            const buttonConfig = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || 'null');
 
             if (!welcomeConfig) {
                 const greeting = "Hey there! You can contact us using this bot, just send your message and we will get back to you as soon as possible.";
@@ -532,7 +532,7 @@ async function handleMessage(msg, env, ctx) {
             ].filter(Boolean).join('\n');
             await sendMessage(botToken, chatId, helpText, { parse_mode: 'MarkdownV2' });
         } else if (isSuperAdmin && ctx.bot_id === 0 && command === '/status') {
-            const channelId = await env.livegram.get(`bot:${ctx.bot_id}:config:channel_id`);
+            const channelId = await env.KV.get(`bot:${ctx.bot_id}:config:channel_id`);
             let channelDisplay = '`NONE`';
             if (channelId) {
                 try {
@@ -594,7 +594,7 @@ async function handleMessage(msg, env, ctx) {
                 await Promise.all([
                     sendMessage(botToken, targetId, 'You have been blocked from using this bot.'),
                     sendMessage(botToken, adminId, `✅ User ${targetName} blocked.`),
-                    env.livegram.put(`bot:${ctx.bot_id}:last_target:${adminId}`, targetId.toString(), { expirationTtl: 86400 })
+                    env.KV.put(`bot:${ctx.bot_id}:last_target:${adminId}`, targetId.toString(), { expirationTtl: 86400 })
                 ]);
                 console.log(`D1 INSERT blocked_users, user_id=${targetId} (${Date.now() - startTime}ms)`);
             } catch (err) {
@@ -659,7 +659,7 @@ async function handleMessage(msg, env, ctx) {
                 if (success) {
                     await sendMessage(botToken, chatId, `✅ User ${targetName} unblocked.`);
                     // Track last target for shortcut (!.)
-                    await env.livegram.put(`bot:${ctx.bot_id}:last_target:${adminId}`, targetId.toString(), { expirationTtl: 86400 });
+                    await env.KV.put(`bot:${ctx.bot_id}:last_target:${adminId}`, targetId.toString(), { expirationTtl: 86400 });
                     console.log(`D1 DELETE blocked_users, user_id=${targetId} bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
                 } else {
                     await sendMessage(botToken, chatId, `User ${targetName} was not blocked on this bot.`);
@@ -669,40 +669,40 @@ async function handleMessage(msg, env, ctx) {
                 await sendErrorToAdmin(botToken, adminId, `Failed to unblock user ${targetId} (${targetName}): ${err.message}`);
             }
         } else if (isAdmin && command === '/delchannel') {
-            await env.livegram.delete(`bot:${ctx.bot_id}:config:channel_id`);
+            await env.KV.delete(`bot:${ctx.bot_id}:config:channel_id`);
             await sendMessage(botToken, chatId, '✅ Linked channel removed.');
             return;
         } else if (isSuperAdmin && ctx.bot_id === 0 && command === '/cbroadcast') {
-            await env.livegram.put(`bot:${ctx.bot_id}:broadcast:${adminId}`, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
+            await env.KV.put(`bot:${ctx.bot_id}:broadcast:${adminId}`, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
             await sendMessage(botToken, chatId, '📢 *Owner Broadcast Mode*\n\nSend me the message you want to broadcast to EVERY clone owner.', { parse_mode: 'MarkdownV2' });
             return;
         } else if (isSuperAdmin && ctx.bot_id === 0 && command === '/gbroadcast') {
             const setupId = `gbroadcast:${Date.now()}`;
-            await env.livegram.put(`bot:${ctx.bot_id}:setup:${userId}`, JSON.stringify({ type: 'gbroadcast_collect', id: setupId }), { expirationTtl: 600 });
+            await env.KV.put(`bot:${ctx.bot_id}:setup:${userId}`, JSON.stringify({ type: 'gbroadcast_collect', id: setupId }), { expirationTtl: 600 });
             await sendMessage(botToken, chatId, '📢 *Global Broadcast Mode*\n\nSend me the message you want to broadcast to EVERY user in EVERY cloned bot.', { parse_mode: 'MarkdownV2' });
             return;
         } else if (isAdmin && command === '/broadcast') {
-            await env.livegram.put(`bot:${ctx.bot_id}:broadcast:${adminId}`, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
+            await env.KV.put(`bot:${ctx.bot_id}:broadcast:${adminId}`, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
             await sendMessage(botToken, adminId, 'Please send the message or media you want to broadcast. You can also *forward* a message from a channel here.', { parse_mode: 'MarkdownV2' });
             console.log(`KV PUT bot:${ctx.bot_id}:broadcast:${adminId} (${Date.now() - startTime}ms)`);
         } else if (isAdmin && command === '/setwelcome') {
-            await env.livegram.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'welcome_count' }), { expirationTtl: 600 });
+            await env.KV.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'welcome_count' }), { expirationTtl: 600 });
             await sendMessage(botToken, adminId, 'How many welcome messages do you want? (1 or 2)');
         } else if (isAdmin && command === '/setbuttons') {
-            await env.livegram.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'buttons' }), { expirationTtl: 600 });
+            await env.KV.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'buttons' }), { expirationTtl: 600 });
             const help = 'Please send your buttons. You can use any format, e.g.:\n`Join Channel | @mychannel`\n`Support | t.me/user`';
             await sendMessage(botToken, adminId, help, { parse_mode: 'MarkdownV2' });
         } else if (isAdmin && command === '/setchannel') {
-            await env.livegram.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'channel' }), { expirationTtl: 600 });
+            await env.KV.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'channel' }), { expirationTtl: 600 });
             await sendMessage(botToken, adminId, 'Please forward a message FROM the channel you want to link, or send the Channel ID (starting with -100).');
         } else if (isAdmin && command === '/delwelcome') {
             await Promise.all([
-                env.livegram.delete(`bot:${ctx.bot_id}:config:welcome`),
-                env.livegram.delete(`bot:${ctx.bot_id}:config:buttons`)
+                env.KV.delete(`bot:${ctx.bot_id}:config:welcome`),
+                env.KV.delete(`bot:${ctx.bot_id}:config:buttons`)
             ]);
             await sendMessage(botToken, adminId, '✅ Welcome message and buttons have been reset to default.');
         } else if (isAdmin && command === '/delbuttons') {
-            const buttons = JSON.parse(await env.livegram.get(`bot:${ctx.bot_id}:config:buttons`) || '[]');
+            const buttons = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || '[]');
             if (!buttons.length) {
                 await sendMessage(botToken, adminId, 'No buttons to delete.');
                 return;
@@ -824,7 +824,7 @@ async function handleMessage(msg, env, ctx) {
                 await sendMessage(botToken, adminId, `✅ Replied to ${profileLink}`, { parse_mode: 'MarkdownV2' });
 
                 // Track last target for shortcut (!.)
-                await env.livegram.put(`bot:${ctx.bot_id}:last_target:${adminId}`, userId.toString(), { expirationTtl: 86400 });
+                await env.KV.put(`bot:${ctx.bot_id}:last_target:${adminId}`, userId.toString(), { expirationTtl: 86400 });
 
                 console.log(`Reply sent to user ${userId}, message_id=${result.result.message_id}, type=${msg.text ? 'text' : msg.sticker ? 'sticker' : msg.photo ? 'photo' : msg.animation ? 'animation' : msg.video ? 'video' : msg.document ? 'document' : 'unknown'}, admin_msg_id=${refId} (${Date.now() - startTime}ms)`);
                 break;
@@ -842,10 +842,10 @@ async function handleMessage(msg, env, ctx) {
 
     // Broadcast message handler
     if (isAdmin && broadcastState === 'pending') {
-        await env.livegram.delete(broadcastKey);
+        await env.KV.delete(broadcastKey);
         const broadcastId = `bot:${ctx.bot_id}:broadcast_data:${Date.now()}`;
 
-        await env.livegram.put(broadcastId, JSON.stringify({
+        await env.KV.put(broadcastId, JSON.stringify({
             from_chat_id: chatId,
             message_id: msg.message_id
         }), { expirationTtl: 3600 });
@@ -894,7 +894,7 @@ async function handleMessage(msg, env, ctx) {
                 if (confirmationResult.ok) {
                     const messageId = confirmationResult.result.message_id;
                     const confirmationKey = `bot:${ctx.bot_id}:confirmation:${userId}`;
-                    await env.livegram.put(confirmationKey, messageId.toString(), { expirationTtl: 86400 });
+                    await env.KV.put(confirmationKey, messageId.toString(), { expirationTtl: 86400 });
                     console.log(`Confirmation sent bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
                 } else {
                     throw new Error(`Failed to send confirmation: ${confirmationResult.description}`);
@@ -940,10 +940,10 @@ async function handleCallbackQuery(query, env, ctx) {
 
     if (data === 'save_welcome') {
         const setupKey = `bot:${ctx.bot_id}:setup:${adminId}`;
-        const setupState = JSON.parse(await env.livegram.get(setupKey) || 'null');
+        const setupState = JSON.parse(await env.KV.get(setupKey) || 'null');
         if (setupState?.type === 'welcome_collect') {
-            await env.livegram.put(`bot:${ctx.bot_id}:config:welcome`, JSON.stringify(setupState.messages));
-            await env.livegram.delete(setupKey);
+            await env.KV.put(`bot:${ctx.bot_id}:config:welcome`, JSON.stringify(setupState.messages));
+            await env.KV.delete(setupKey);
             await sendMessage(botToken, adminId, '✅ Welcome messages updated and live!');
             await answerCallbackQuery(botToken, query.id, 'Saved!');
         } else {
@@ -952,17 +952,17 @@ async function handleCallbackQuery(query, env, ctx) {
         await deleteMessage(botToken, chatId, messageId);
         return;
     } else if (data === 'cancel_welcome') {
-        await env.livegram.delete(`bot:${ctx.bot_id}:setup:${adminId}`);
+        await env.KV.delete(`bot:${ctx.bot_id}:setup:${adminId}`);
         await sendMessage(botToken, adminId, '❌ Setup cancelled.');
         await answerCallbackQuery(botToken, query.id, 'Cancelled.');
         await deleteMessage(botToken, chatId, messageId);
         return;
     } else if (data.startsWith('delete_btn:')) {
         const index = parseInt(data.split(':')[1], 10);
-        const buttons = JSON.parse(await env.livegram.get(`bot:${ctx.bot_id}:config:buttons`) || '[]');
+        const buttons = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || '[]');
         if (buttons[index]) {
             const removed = buttons.splice(index, 1);
-            await env.livegram.put(`bot:${ctx.bot_id}:config:buttons`, JSON.stringify(buttons));
+            await env.KV.put(`bot:${ctx.bot_id}:config:buttons`, JSON.stringify(buttons));
             await answerCallbackQuery(botToken, query.id, `Deleted: ${removed[0].text}`);
 
             // Refresh the list or delete message
@@ -988,7 +988,7 @@ async function handleCallbackQuery(query, env, ctx) {
         return;
     } else if (data.startsWith('confirm_gbroadcast:')) {
         const setupId = data.replace('confirm_gbroadcast:', '');
-        const broadcastData = JSON.parse(await env.livegram.get(setupId) || 'null');
+        const broadcastData = JSON.parse(await env.KV.get(setupId) || 'null');
         if (!broadcastData) {
             await answerCallbackQuery(botToken, query.id, 'Global broadcast data lost.');
             return;
@@ -1025,7 +1025,7 @@ async function handleCallbackQuery(query, env, ctx) {
             }
         }
 
-        await env.livegram.delete(setupId);
+        await env.KV.delete(setupId);
         const report = `📊 *Global Broadcast Final Report*\n✅ Sent: ${totalSuccess}\n❌ Failed: ${totalFail}`;
         await sendMessage(botToken, adminId, report, { parse_mode: 'MarkdownV2' });
         await answerCallbackQuery(botToken, query.id, 'Global Send Completed!');
@@ -1033,14 +1033,14 @@ async function handleCallbackQuery(query, env, ctx) {
         return;
     } else if (data.startsWith('cancel_gbroadcast:')) {
         const setupId = data.replace('cancel_gbroadcast:', '');
-        await env.livegram.delete(setupId);
+        await env.KV.delete(setupId);
         await sendMessage(botToken, adminId, '❌ Global broadcast cancelled.');
         await answerCallbackQuery(botToken, query.id, 'Cancelled.');
         await deleteMessage(botToken, chatId, messageId);
         return;
     } else if (data.startsWith('confirm_cbroadcast:')) {
         const broadcastId = data.replace('confirm_cbroadcast:', '');
-        const broadcast = JSON.parse(await env.livegram.get(broadcastId) || 'null');
+        const broadcast = JSON.parse(await env.KV.get(broadcastId) || 'null');
         if (!broadcast) {
             await answerCallbackQuery(botToken, query.id, 'Broadcast data lost.');
             return;
@@ -1065,14 +1065,14 @@ async function handleCallbackQuery(query, env, ctx) {
             await new Promise(r => setTimeout(r, 200));
         }
 
-        await env.livegram.delete(broadcastId);
+        await env.KV.delete(broadcastId);
         await sendMessage(botToken, adminId, `📊 *Owner Broadcast Report*\n✅ Sent: ${successCount}\n❌ Failed: ${failCount}`, { parse_mode: 'MarkdownV2' });
         await answerCallbackQuery(botToken, query.id, 'Owners Notified!');
         await deleteMessage(botToken, chatId, messageId);
         return;
     } else if (data.startsWith('cancel_cbroadcast:')) {
         const broadcastId = data.replace('cancel_cbroadcast:', '');
-        await env.livegram.delete(broadcastId);
+        await env.KV.delete(broadcastId);
         await sendMessage(botToken, adminId, '❌ Owner broadcast cancelled.');
         await answerCallbackQuery(botToken, query.id, 'Cancelled.');
         await deleteMessage(botToken, chatId, messageId);
@@ -1095,18 +1095,18 @@ async function handleCallbackQuery(query, env, ctx) {
         const broadcastId = data.replace('confirm_broadcast:', '');
         let broadcast;
         try {
-            broadcast = JSON.parse(await env.livegram.get(broadcastId));
+            broadcast = JSON.parse(await env.KV.get(broadcastId));
         } catch (err) {
             await sendMessage(botToken, adminId, 'Broadcast message corrupted or not found.');
             await answerCallbackQuery(botToken, query.id, 'Broadcast failed.');
-            await env.livegram.delete(broadcastId);
+            await env.KV.delete(broadcastId);
             return;
         }
 
         if (!broadcast?.message_id || !broadcast?.from_chat_id) {
             await sendMessage(botToken, adminId, 'Invalid broadcast data.');
             await answerCallbackQuery(botToken, query.id, 'Broadcast failed.');
-            await env.livegram.delete(broadcastId);
+            await env.KV.delete(broadcastId);
             return;
         }
 
@@ -1148,7 +1148,7 @@ async function handleCallbackQuery(query, env, ctx) {
             await new Promise(r => setTimeout(r, 200)); // Batch throttle
         }
 
-        await env.livegram.delete(broadcastId);
+        await env.KV.delete(broadcastId);
         let report = `Broadcast sent to ${successCount} users, failed for ${failCount} users.`;
         if (failCount > 0) {
             report += `\nErrors:\n${errors.join('\n')}`;
@@ -1159,7 +1159,7 @@ async function handleCallbackQuery(query, env, ctx) {
         console.log(`KV DELETE ${broadcastId}, Broadcast sent (${Date.now() - startTime}ms)`);
     } else if (data.startsWith('cancel_broadcast:')) {
         const broadcastId = data.replace('cancel_broadcast:', '');
-        await env.livegram.delete(broadcastId);
+        await env.KV.delete(broadcastId);
         await sendMessage(botToken, adminId, 'Broadcast cancelled.');
         await answerCallbackQuery(botToken, query.id, 'Broadcast cancelled.');
         await deleteMessage(botToken, chatId, messageId);
@@ -1171,7 +1171,7 @@ async function handleChannelPost(post, env, ctx) {
     const startTime = Date.now();
     const botToken = ctx.bot_token;
     const adminId = ctx.admin_id;
-    const channelId = await env.livegram.get(`bot:${ctx.bot_id}:config:channel_id`);
+    const channelId = await env.KV.get(`bot:${ctx.bot_id}:config:channel_id`);
 
     if (!channelId || post.chat.id.toString() !== channelId) {
         return;
