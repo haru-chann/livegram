@@ -1,0 +1,13 @@
+{
+  "name": "livegram",
+  "version": "1.0.0",
+  "description": "Multi-tenant Telegram bot cloner",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

@@ -1,0 +1,16 @@
+name = "livegram"
+main = "worker.js"
+compatibility_date = "2024-03-01"
+
+[vars]
+# ADMIN_ID = "YourID"
+# BOT_TOKEN = "YourToken"
+
+[[d1_databases]]
+binding = "D1_DB"
+database_name = "livegram-db"
+database_id = "paste-your-db-id-here"
+
+[kv_namespaces]
+binding = "KV"
+id = "paste-your-kv-id-here"
