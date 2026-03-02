@@ -41,7 +41,10 @@ const MESSAGES = {
     REPLIED_SUCCESS: (link) => `✅ Replied to ${link}`,
     USER_UNREACHABLE: (id, desc) => `User ${id} unreachable: ${desc}`,
     BROADCAST_REPORT: (success, fail) => `Broadcast sent to ${success} users, failed for ${fail} users.`,
-    FORWARD_REPORT: (success, fail) => `📢 *Auto-Forward Report*\n✅ Sent to ${success} users\n❌ Failed for ${fail} users`
+    FORWARD_REPORT: (success, fail) => `📢 *Auto-Forward Report*\n✅ Sent to ${success} users\n❌ Failed for ${fail} users`,
+    CONFIRMATION: "𝚜𝚎𝚗𝚝 ✅",
+    WELCOME_PREVIEW: "✨ *Previewing your new welcome sequence:*",
+    CLONE_INSTRUCTIONS: "To connect a bot, you should follow these two steps:\n\n1. Open @BotFather and create a new bot.\n2. You'll get a token (e.g. 12345:6789ABCDEF) — copy-paste it to this chat.\n\nWarning! Don't connect bots already used by other services."
 };
 
 function log(ctx, message, data = {}) {
@@ -642,45 +645,32 @@ async function handleAdminCommands(msg, env, ctx, { command, fullCommand }) {
     const broadcastKey = `bot:${bot_id}:broadcast:${admin_id}`;
 
     try {
-        if (command === '/start' || command === '/help') {
-            const helpLines = [
-                `👋 *Telegram Bot Manager*`,
-                ``,
-                `• /start - Initialize bot`,
-                `• /help - Show this menu`,
-                `• /clone - Request a bot clone`,
-                `• /cancel - Stop current action`
-            ];
-
-            if (isAdmin) {
-                helpLines.push(
-                    ``, `🛡️ *Admin Only*`,
-                    `• /broadcast - Send message to all users`,
-                    `• /setwelcome - Customize welcome greeting`,
-                    `• /setbuttons - Customize start buttons`,
-                    `• /setchannel - Link channel for auto-forwarding`,
-                    `• /delchannel - Remove linked channel`,
-                    `• /delwelcome - Reset welcome message`,
-                    `• /delbuttons - Remove specific buttons`,
-                    `• /userlist - List bot users`,
-                    `• /block - (reply) Block a user`,
-                    `• /unblock - Unblock a user`
-                );
-            }
-
-            if (is_super_bot) {
-                helpLines.push(
-                    ``, `👑 *Super Admin Only*`,
-                    `• /gbroadcast - Global broadcast to ALL clones`,
-                    `• /cbroadcast - Message all clone owners`,
-                    `• /status - Server diagnostics`,
-                    `• /req - View pending clone requests`,
-                    `• /clones - Manage active clones`
-                );
-            }
-
-            // We use auto_escape: false here because we WANT the * and • to be processed by MarkdownV2
-            await sendMessage(bot_token, chatId, helpLines.join('\n'), { parse_mode: 'MarkdownV2', auto_escape: false });
+        if (command === '/help' || command === '/cmd' || command === '/cmds') {
+            const helpText = `� *Available Commands*\n\n` +
+                `👤 *Public*\n` +
+                `• /start \\- Start the bot\n` +
+                `• /clone \\- Request your own bot clone\n` +
+                `• /help \\- Get help & contact info\n\n` +
+                (isAdmin ? `🛡️ *Admin Only*\n` +
+                    `• /broadcast \\- Send message to all users\n` +
+                    `• /setwelcome \\- Customize welcome greeting\n` +
+                    `• /setbuttons \\- Customize start buttons\n` +
+                    `• /setchannel \\- Link channel for auto\\-forwarding\n` +
+                    `• /delchannel \\- Remove linked channel\n` +
+                    `• /delwelcome \\- Reset welcome message\n` +
+                    `• /delbuttons \\- Remove specific buttons\n` +
+                    `• /userlist \\- List bot users\n` +
+                    `• /block \\- \\(reply\\) Block a user\n` +
+                    `• /unblock \\- Unblock a user\n` +
+                    `• /cancel \\- Cancel current setup\n\n` : '') +
+                (ctx.is_super_bot ? `👑 *Super Admin Only*\n` +
+                    `• /gbroadcast \\- Global broadcast to ALL clones\n` +
+                    `• /cbroadcast \\- Message all clone owners\n` +
+                    `• /status \\- Server diagnostics\n` +
+                    `• /req \\- View pending clone requests\n` +
+                    `• /clones \\- Manage active clones\n\n` : '') +
+                `_For further help contact owner @thv\\_haru_`;
+            await sendMessage(bot_token, msg.chat.id, helpText, { parse_mode: 'MarkdownV2', auto_escape: false });
             return true;
         }
 
@@ -700,21 +690,21 @@ async function handleAdminCommands(msg, env, ctx, { command, fullCommand }) {
 
         if (command === '/clone') {
             await env.KV.put(setupKey, JSON.stringify({ type: 'clone_collect' }), { expirationTtl: 600 });
-            await sendMessage(bot_token, chatId, "Please send your Bot Token from @BotFather.");
+            await sendMessage(bot_token, chatId, MESSAGES.CLONE_INSTRUCTIONS, { parse_mode: undefined });
             return true;
         }
 
         if (command === '/userlist') {
             const users = (await env.D1.prepare('SELECT user_id, username, first_name FROM users WHERE bot_id = ? LIMIT 50').bind(bot_id).all()).results;
             if (!users.length) return await sendMessage(bot_token, chatId, 'No users yet.');
-            let list = '👥 *Users:*\n\n' + users.map(u => `• [${escapeMarkdown(u.first_name || 'User')}](tg://user?id=${u.user_id})${u.username ? ` (@${escapeMarkdown(u.username)})` : ''}`).join('\n');
+            let list = '👥 *Users:*\n\n' + users.map(u => u.username ? `• ${escapeMarkdown(u.first_name || 'User')} (@${escapeMarkdown(u.username)})` : `• \`${u.user_id}\``).join('\n');
             await sendMessage(bot_token, chatId, list, { parse_mode: 'MarkdownV2', auto_escape: false });
             return true;
         }
 
         if (command === '/broadcast') {
             await env.KV.put(broadcastKey, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
-            await sendMessage(bot_token, chatId, MESSAGES.BROADCAST_PROMPT, { parse_mode: 'MarkdownV2' });
+            await sendMessage(bot_token, chatId, MESSAGES.BROADCAST_PROMPT, { parse_mode: 'MarkdownV2', auto_escape: false });
             return true;
         }
 
@@ -726,7 +716,7 @@ async function handleAdminCommands(msg, env, ctx, { command, fullCommand }) {
 
         if (command === '/setbuttons') {
             await env.KV.put(setupKey, JSON.stringify({ type: 'buttons' }), { expirationTtl: 600 });
-            await sendMessage(bot_token, chatId, MESSAGES.BUTTONS_PROMPT, { parse_mode: 'MarkdownV2' });
+            await sendMessage(bot_token, chatId, MESSAGES.BUTTONS_PROMPT, { parse_mode: 'MarkdownV2', auto_escape: false });
             return true;
         }
 
@@ -774,13 +764,13 @@ async function handleAdminCommands(msg, env, ctx, { command, fullCommand }) {
 
         if (is_super_bot && command === '/cbroadcast') {
             await env.KV.put(broadcastKey, JSON.stringify({ type: 'pending_owner' }), { expirationTtl: 300 });
-            await sendMessage(bot_token, chatId, MESSAGES.OWNER_BROADCAST_START, { parse_mode: 'MarkdownV2' });
+            await sendMessage(bot_token, chatId, MESSAGES.OWNER_BROADCAST_START, { parse_mode: 'MarkdownV2', auto_escape: false });
             return true;
         }
 
         if (is_super_bot && command === '/gbroadcast') {
             await env.KV.put(setupKey, JSON.stringify({ type: 'gbroadcast_collect', id: `gb:${Date.now()}` }), { expirationTtl: 600 });
-            await sendMessage(bot_token, chatId, MESSAGES.GLOBAL_BROADCAST_START, { parse_mode: 'MarkdownV2' });
+            await sendMessage(bot_token, chatId, MESSAGES.GLOBAL_BROADCAST_START, { parse_mode: 'MarkdownV2', auto_escape: false });
             return true;
         }
 
@@ -840,7 +830,7 @@ async function handleSetupState(msg, env, ctx, state) {
                 await sendMessage(bot_token, chatId, MESSAGES.STEP_2_WELCOME);
             } else {
                 await env.KV.put(key, JSON.stringify(state), { expirationTtl: 600 });
-                await sendMessage(bot_token, chatId, 'Previewing...');
+                await sendMessage(bot_token, chatId, MESSAGES.WELCOME_PREVIEW, { parse_mode: 'MarkdownV2', auto_escape: false });
                 for (const m of state.messages) {
                     if (m.type === 'text') await sendMessage(bot_token, chatId, m.content);
                     else await sendMedia(bot_token, chatId, { [m.type]: m.file_id, caption: m.caption });
@@ -896,7 +886,7 @@ async function handleSetupState(msg, env, ctx, state) {
             const ref = Math.random().toString(36).substring(7);
             await env.D1.prepare('INSERT INTO clones (token, owner_id, bot_username, secret_ref, status, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(token, user_id, meRes.result.username, ref, 'pending', Math.floor(Date.now() / 1000)).run();
             await env.KV.delete(key);
-            await sendMessage(bot_token, chatId, MESSAGES.CLONE_REQUEST_SENT(meRes.result.username), { parse_mode: 'MarkdownV2' });
+            await sendMessage(bot_token, chatId, MESSAGES.CLONE_REQUEST_SENT(meRes.result.username), { parse_mode: 'MarkdownV2', auto_escape: false });
             await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `🆕 *New Clone Request*\n\nBot: @${escapeMarkdown(meRes.result.username)}\nOwner: \`${user_id}\``, { parse_mode: 'MarkdownV2', auto_escape: false, reply_markup: { inline_keyboard: [[{ text: '✅ Approve', callback_data: `approve_clone:${ref}` }, { text: '❌ Reject', callback_data: `reject_clone:${ref}` }]] } });
             return true;
         }
@@ -988,7 +978,7 @@ async function handleUserMessage(msg, env, ctx) {
             env.D1.prepare('INSERT INTO users (user_id, username, first_name, bot_id) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, bot_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name').bind(user_id, msg.from.username || '', msg.from.first_name || 'User', bot_id)
         ]);
 
-        const conf = await (await sendMessage(bot_token, user_id, 'ˢᵉⁿᵗ ✅')).json();
+        const conf = await (await sendMessage(bot_token, user_id, MESSAGES.CONFIRMATION)).json();
         if (conf.ok) await env.KV.put(`bot:${bot_id}:confirmation:${user_id}`, conf.result.message_id.toString(), { expirationTtl: 86400 });
     } else {
         // Only update user profile if forwarding failed (so we still know they exist)
