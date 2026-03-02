@@ -1,9 +1,87 @@
+const MESSAGES = {
+    START_GREETING: "Hey there! You can contact us using this bot, just send your message and we will get back to you as soon as possible.",
+    CANCELLED_ALL: "❌ All active processes (setup/broadcast) have been cancelled.",
+    NO_ACTIVE_CANCEL: "No active setup or broadcast to cancel.",
+    RATE_LIMIT: "⚠️ Please wait before sending more messages.",
+    NO_LAST_TARGET: "❌ No last target found. Reply to a user first to set one.",
+    QUICK_REPLY_EMPTY: "❌ Please provide a message after !.",
+    QUICK_REPLY_SENT: (targetId) => `✅ Message sent to user \`${targetId}\``,
+    STEP_1_WELCOME: "Step 1: Send the first message (Text, Photo, Sticker, GIF, etc.)",
+    STEP_2_WELCOME: "Step 2: Send the second message (Text, Photo, Sticker, GIF, etc.)",
+    WELCOME_SAVE_CONFIRM: "Confirm saving this sequence?",
+    WELCOME_UNSUPPORTED: "Unsupported media type for welcome message. Please send text, sticker, photo, GIF, video, or document.",
+    BUTTONS_UPDATED: (count) => `✅ ${count} buttons updated successfully!`,
+    BUTTONS_INVALID: "❌ Invalid format. Please send buttons in `Label | Link` format, one per line.",
+    CHANNEL_LINKED: (id) => `✅ Channel linked successfully! ID: \`${id}\`\nMake sure the bot is an admin in that channel.`,
+    CHANNEL_INVALID: "❌ Invalid channel. Please forward a message from the channel or send the correct ID.",
+    CLONE_TOKEN_INVALID: "❌ Invalid bot token format. It should look like `12345:6789ABCDEF`.",
+    CLONE_REQUEST_SENT: (username) => `✅ Request sent! Your bot @${escapeMarkdown(username)} is now pending approval from the Super Admin.`,
+    CLONE_PENDING_TITLE: "⏳ *Pending Clone Requests:*\n\n",
+    ACTIVE_CLONES_TITLE: "🚀 *Active Clones:*\n\n",
+    REQ_INVALID: "❌ Invalid request number.",
+    CLONE_DEL_INVALID: "❌ Invalid clone number.",
+    OWNER_BROADCAST_START: "📢 *Owner Broadcast Mode*\n\nSend me the message you want to broadcast to EVERY clone owner.",
+    GLOBAL_BROADCAST_START: "📢 *Global Broadcast Mode*\n\nSend me the message you want to broadcast to EVERY user in EVERY cloned bot.",
+    BROADCAST_PROMPT: "Please send the message or media you want to broadcast. You can also *forward* a message from a channel here.",
+    WELCOME_PROMPT: "How many welcome messages do you want? (1 or 2)",
+    BUTTONS_PROMPT: "Please send your buttons. You can use any format, e.g.:\n`Join Channel | @mychannel`\n`Support | t.me/user`",
+    CHANNEL_PROMPT: "Please forward a message FROM the channel you want to link, or send the Channel ID (starting with -100).",
+    RESET_DEFAULT: "✅ Welcome message and buttons have been reset to default.",
+    NO_BUTTONS: "No buttons to delete.",
+    BUTTON_DELETE_SELECT: "Select a button to delete:",
+    BLOCKED_USER: "You have been blocked from using this bot.",
+    USER_BLOCKED_SUCCESS: (name) => `✅ User ${name} blocked.`,
+    UNBLOCK_USAGE: "Please provide a username (e.g., @username) or user ID, or reply to a forwarded message. Usage: /unblock <username/user_id>",
+    USER_NOT_FOUND: (val) => `User ${val} not found.`,
+    USER_UNBLOCKED_SUCCESS: (name) => `✅ User ${name} unblocked.`,
+    USER_NOT_BLOCKED: (name) => `User ${name} was not blocked on this bot.`,
+    CHANNEL_REMOVED: "✅ Linked channel removed.",
+    STATUS_TITLE: "ℹ️ *Bot Status*",
+    STATUS_FOOTER: "_Command menu synchronized for this bot_",
+    REPLIED_SUCCESS: (link) => `✅ Replied to ${link}`,
+    USER_UNREACHABLE: (id, desc) => `User ${id} unreachable: ${desc}`,
+    BROADCAST_REPORT: (success, fail) => `Broadcast sent to ${success} users, failed for ${fail} users.`,
+    FORWARD_REPORT: (success, fail) => `📢 *Auto-Forward Report*\n✅ Sent to ${success} users\n❌ Failed for ${fail} users`
+};
+
+function log(ctx, message, data = {}) {
+    console.log(JSON.stringify({
+        timestamp: new Date().toISOString(),
+        bot_id: ctx.bot_id || 0,
+        user_id: ctx.user_id || 0,
+        message,
+        ...data
+    }));
+}
+
+async function logError(env, ctx, error, context = "General") {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    const data = {
+        timestamp: new Date().toISOString(),
+        bot_id: ctx?.bot_id || 0,
+        user_id: ctx?.user_id || 0,
+        context,
+        error: errorMsg,
+        stack: error instanceof Error ? error.stack : undefined
+    };
+    console.error(JSON.stringify(data));
+
+    if (ctx?.super_admin_id && env.BOT_TOKEN) {
+        try {
+            const report = `⚠️ *System Error* [${escapeMarkdown(context)}]\n` +
+                `• Bot ID: \`${ctx.bot_id}\`\n` +
+                `• User ID: \`${ctx.user_id}\`\n\n` +
+                `\`${escapeMarkdown(errorMsg)}\``;
+            await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, report, { parse_mode: 'MarkdownV2' });
+        } catch (e) {
+            console.error("Failed to send error report:", e.message);
+        }
+    }
+}
+
 export default {
     async fetch(request, env) {
-        if (request.method !== 'POST') {
-            return new Response('Method not allowed', { status: 405 });
-        }
-
+        if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
         const url = new URL(request.url);
         const path = url.pathname;
         const superAdminId = env.ADMIN_ID?.toString().trim();
@@ -13,1287 +91,368 @@ export default {
             bot_token: env.BOT_TOKEN,
             admin_id: superAdminId,
             super_admin_id: superAdminId,
-            welcome_sticker_id: 'CAACAgUAAxkBAAEO65loctd5hHKIfBaAHWtWs6VUBg4WPwACkxMAAgUsmVc01NXwsbyu3zYE',
-            is_super_bot: true
+            is_super_bot: true,
+            request_url: request.url
         };
 
-        // Routing for Cloned Bots
         if (path.startsWith('/handle/')) {
             const secretRef = path.split('/')[2];
-            try {
-                const clone = await env.D1.prepare('SELECT * FROM clones WHERE secret_ref = ? AND status = ?').bind(secretRef, 'active').first();
-                if (clone) {
-                    ctx = {
-                        bot_id: clone.id,
-                        bot_token: clone.token,
-                        admin_id: clone.owner_id.toString(),
-                        super_admin_id: superAdminId,
-                        welcome_sticker_id: ctx.welcome_sticker_id,
-                        is_super_bot: false
-                    };
-                } else {
-                    return new Response('Forbidden', { status: 403 });
-                }
-            } catch (err) {
-                console.error(`D1 Routing Error: ${err.message}`);
-                return new Response('Error', { status: 500 });
-            }
+            const clone = await env.D1.prepare('SELECT * FROM clones WHERE secret_ref = ? AND status = ?').bind(secretRef, 'active').first();
+            if (!clone) return new Response('Forbidden', { status: 403 });
+            ctx = {
+                bot_id: clone.id,
+                bot_token: clone.token,
+                admin_id: clone.owner_id.toString(),
+                super_admin_id: superAdminId,
+                is_super_bot: false,
+                request_url: request.url
+            };
         }
 
         try {
             const update = await request.json();
+            ctx.user_id = update.message?.from?.id || update.callback_query?.from?.id || update.channel_post?.from?.id || 0;
+
             if (update.message) {
-                // Support forwarding from Supergroups if linked
                 const channelId = await env.KV.get(`bot:${ctx.bot_id}:config:channel_id`);
-                if (channelId && update.message.chat.id.toString() === channelId && !update.message.from.is_bot) {
-                    await handleChannelPost(update.message, env, ctx);
-                } else {
-                    await handleMessage(update.message, env, ctx);
-                }
+                if (channelId && update.message.chat.id.toString() === channelId && !update.message.from?.is_bot) await handleChannelPost(update.message, env, ctx);
+                else await handleMessage(update.message, env, ctx);
             } else if (update.callback_query) {
                 await handleCallbackQuery(update.callback_query, env, ctx);
-            } else if (update.channel_post || update.edited_channel_post) {
-                await handleChannelPost(update.channel_post || update.edited_channel_post, env, ctx);
+            } else if (update.channel_post) {
+                await handleChannelPost(update.channel_post, env, ctx);
             }
-
             return new Response('OK', { status: 200 });
         } catch (err) {
-            console.error(`Handler Error: ${err.message}`);
-            await sendErrorToAdmin(env, ctx, `Handler Error: ${err.message}`);
-            return new Response('OK', { status: 200 });
+            await logError(env, ctx, err, "WebhookHandler");
+            return new Response('Internal Server Error', { status: 500 });
         }
+    },
+    async scheduled(event, env, ctx) {
+        await scheduled(event, env, ctx);
     }
 };
 
-function formatUsername(username) {
-    if (!username) return null;
-    const clean = username.startsWith('@') ? username.substring(1) : username;
-    return `@${escapeMarkdown(clean)}`;
-}
-
 async function handleMessage(msg, env, ctx) {
-    const startTime = Date.now();
-    const botToken = ctx.bot_token;
-    const adminId = ctx.admin_id;
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
+    const { bot_id, admin_id, user_id, bot_token, super_admin_id } = ctx;
     const text = msg.text || '';
-    const isSuperAdmin = userId.toString() === ctx.super_admin_id;
-    const isAdmin = userId.toString() === adminId || isSuperAdmin;
-    const username = msg.from.username ? `@${msg.from.username}` : null;
-    const firstName = msg.from.first_name || 'User';
+    const isAdmin = user_id.toString() === admin_id || user_id.toString() === super_admin_id;
 
-    // Unified Fetch (KV + D1)
-    const confirmationKey = `bot:${ctx.bot_id}:confirmation:${userId}`;
-    const rateKey = `bot:${ctx.bot_id}:rate:${userId}`;
-    const setupKey = isAdmin ? `bot:${ctx.bot_id}:setup:${adminId}` : null;
-    const broadcastKey = isAdmin ? `bot:${ctx.bot_id}:broadcast:${adminId}` : null;
-
-    const [rateDataStr, confirmationMsgId, blockedCheck, setupStateStr, broadcastState] = await Promise.all([
-        env.KV.get(rateKey),
-        !isAdmin ? env.KV.get(confirmationKey) : Promise.resolve(null),
-        !isAdmin ? env.D1.prepare('SELECT 1 FROM blocked_users WHERE user_id = ? AND bot_id = ?').bind(userId, ctx.bot_id).first() : Promise.resolve(null),
-        isAdmin ? env.KV.get(setupKey) : Promise.resolve(null),
-        isAdmin ? env.KV.get(broadcastKey) : Promise.resolve(null)
-    ]);
-
-    // Universal Cancel (Admin only)
-    if (isAdmin && text.toLowerCase() === '/cancel') {
-        const keysToDelete = [];
-        if (setupStateStr) keysToDelete.push(setupKey);
-        if (broadcastState) keysToDelete.push(broadcastKey);
-
-        if (keysToDelete.length > 0) {
-            await Promise.all(keysToDelete.map(k => env.KV.delete(k)));
-            await sendMessage(botToken, chatId, '❌ All active processes \\(setup/broadcast\\) have been cancelled\\.');
-        } else {
-            await sendMessage(botToken, chatId, 'No active setup or broadcast to cancel\\.');
-        }
-        return;
-    }
-
-    // Delete previous confirmation message if exists (non-admin only)
-    if (!isAdmin && confirmationMsgId) {
-        try {
-            await deleteMessage(botToken, chatId, parseInt(confirmationMsgId, 10));
-        } catch (err) {
-            console.error(`Failed to delete confirmation ${confirmationMsgId}: ${err.message}`);
-        }
-        await env.KV.delete(confirmationKey);
-    }
-
-    // Block check (D1)
-    if (!isAdmin && blockedCheck && text !== '/start') {
-        return;
-    }
-
-    // Rate limiting (KV, 60s TTL)
-    if (!isAdmin) {
-        const rateData = JSON.parse(rateDataStr || '{"count":0,"timestamp":0}');
-        const now = Math.floor(Date.now() / 1000);
-        if (now - rateData.timestamp < 60) {
-            rateData.count++;
-        } else {
-            rateData.count = 1;
-            rateData.timestamp = now;
-        }
-        if (rateData.count > 10) {
-            await sendMessage(botToken, chatId, '⚠️ Please wait before sending more messages\\.');
-            return;
-        }
-        await env.KV.put(rateKey, JSON.stringify(rateData), { expirationTtl: 60 });
-    }
-
-    // Quick-Reply Shortcut (!.) Handler (Admin only)
     if (isAdmin) {
-        const shortcutPrefix = '!.';
-        const msgText = msg.text || msg.caption || '';
-        if (msgText.startsWith(shortcutPrefix)) {
-            const lastTargetKey = `bot:${ctx.bot_id}:last_target:${adminId}`;
-            const lastTargetId = await env.KV.get(lastTargetKey);
+        const setupStr = await env.KV.get(`bot:${bot_id}:setup:${admin_id}`);
+        if (setupStr && await handleSetupState(msg, env, ctx, JSON.parse(setupStr))) return;
 
-            if (!lastTargetId) {
-                await sendMessage(botToken, chatId, '❌ No last target found\\. Reply to a user first to set one\\.');
-                return;
-            }
-
-            const cleanContent = msgText.substring(shortcutPrefix.length).trim();
-            if (!cleanContent && !msg.photo && !msg.sticker && !msg.video && !msg.animation && !msg.document) {
-                await sendMessage(botToken, chatId, '❌ Please provide a message after \\!\\.');
-                return;
-            }
-
-            try {
-                const targetId = parseInt(lastTargetId, 10);
-                // Prepare message object for sending
-                const quickMsg = { ...msg };
-                if (msg.text) quickMsg.text = cleanContent;
-                if (msg.caption) quickMsg.caption = cleanContent;
-
-                const response = await sendMedia(botToken, targetId, quickMsg);
-                const result = await response.json();
-
-                if (result.ok) {
-                    await sendMessage(botToken, chatId, `✅ Message sent to user \\\`${targetId}\\\``, { parse_mode: 'MarkdownV2' });
-                } else {
-                    await sendErrorToAdmin(env, ctx, `Quick-reply failed: ${result.description}`);
-                }
-            } catch (err) {
-                await sendErrorToAdmin(env, ctx, `Quick-reply error: ${err.message}`);
-            }
-            return;
-        }
+        const broadStr = await env.KV.get(`bot:${bot_id}:broadcast:${admin_id}`);
+        if (broadStr && await handleBroadcastState(msg, env, ctx, JSON.parse(broadStr))) return;
     }
 
-    // State-based Setup Handler (Admin only)
-    if (isAdmin && setupStateStr) {
-        const setupState = JSON.parse(setupStateStr);
-
-        if (setupState) {
-
-            if (setupState.type === 'welcome_count') {
-                const count = parseInt(text, 10);
-                if (count === 1 || count === 2) {
-                    setupState.step = 1;
-                    setupState.targetCount = count;
-                    setupState.messages = [];
-                    setupState.type = 'welcome_collect';
-                    await env.KV.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
-                    await sendMessage(botToken, chatId, `Step 1: Send the first message \\(Text, Photo, Sticker, GIF, etc\\.\\)`);
-                } else {
-                    await sendMessage(botToken, chatId, 'Please send 1 or 2\\.');
-                }
-                return;
-            }
-
-            if (setupState.type === 'welcome_collect') {
-                let msgData;
-                if (msg.text) {
-                    msgData = { type: 'text', content: msg.text };
-                } else if (msg.sticker) {
-                    msgData = { type: 'sticker', file_id: msg.sticker.file_id };
-                } else if (msg.photo) {
-                    msgData = { type: 'photo', file_id: msg.photo[msg.photo.length - 1].file_id, caption: msg.caption };
-                } else if (msg.animation) {
-                    msgData = { type: 'animation', file_id: msg.animation.file_id, caption: msg.caption };
-                } else if (msg.video) {
-                    msgData = { type: 'video', file_id: msg.video.file_id, caption: msg.caption };
-                } else if (msg.document) {
-                    msgData = { type: 'document', file_id: msg.document.file_id, caption: msg.caption };
-                }
-
-                if (msgData) {
-                    setupState.messages.push(msgData);
-                    if (setupState.messages.length < setupState.targetCount) {
-                        setupState.step++;
-                        await env.KV.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
-                        await sendMessage(botToken, chatId, `Step 2: Send the second message \\(Text, Photo, Sticker, GIF, etc\\.\\)`);
-                    } else {
-                        await env.KV.put(setupKey, JSON.stringify(setupState), { expirationTtl: 600 });
-
-                        // Full Preview Flow
-                        await sendMessage(botToken, chatId, '✨ *Previewing your new welcome sequence:*', { parse_mode: 'MarkdownV2' });
-                        const buttonConfig = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || 'null');
-
-                        for (let i = 0; i < setupState.messages.length; i++) {
-                            const item = setupState.messages[i];
-                            const isLast = i === setupState.messages.length - 1;
-                            const reply_markup = isLast ? buildKeyboard(buttonConfig) : undefined;
-
-                            if (item.type === 'text') {
-                                await sendMessage(botToken, chatId, item.content, { reply_markup });
-                            } else {
-                                const msgForMedia = { [item.type]: item.file_id, caption: item.caption };
-                                await sendMedia(botToken, chatId, msgForMedia, { reply_markup });
-                            }
-                        }
-
-                        await sendMessage(botToken, chatId, 'Confirm saving this sequence?', {
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [
-                                        { text: '✅ Save', callback_data: 'save_welcome' },
-                                        { text: '❌ Cancel', callback_data: 'cancel_welcome' }
-                                    ]
-                                ]
-                            }
-                        });
-                    }
-                } else {
-                    await sendMessage(botToken, chatId, 'Unsupported media type for welcome message\\. Please send text, sticker, photo, GIF, video, or document\\.');
-                }
-                return;
-            }
-
-            if (setupState.type === 'buttons') {
-                const buttons = [];
-                const lines = text.split('\n');
-
-                const smartFixUrl = (url) => {
-                    url = url.trim();
-                    if (!url) return '';
-                    if (url.startsWith('@')) return `https://t.me/${url.substring(1)}`;
-                    if (url.startsWith('https://') || url.startsWith('http://') || url.startsWith('tg://')) return url;
-                    // Check if it's a simple username/word
-                    if (/^[a-zA-Z0-9_]{5,}$/.test(url)) return `https://t.me/${url}`;
-                    // Default to https prefix if missing protocol
-                    if (url.includes('.') && !url.includes(' ')) return `https://${url}`;
-                    return url; // Return as is, Telegram might still reject but we tried
-                };
-
-                for (const line of lines) {
-                    const parts = line.split('|');
-                    if (parts.length >= 2) {
-                        const btnText = parts[0].trim();
-                        const btnUrl = smartFixUrl(parts.slice(1).join('|'));
-                        if (btnText && btnUrl) {
-                            buttons.push({ text: btnText, url: btnUrl });
-                        }
-                    } else if (line.trim()) {
-                        const item = line.trim();
-                        const fixedUrl = smartFixUrl(item);
-                        buttons.push({ text: item, url: fixedUrl });
-                    }
-                }
-
-                if (buttons.length > 0) {
-                    await env.KV.put(`bot:${ctx.bot_id}:config:buttons`, JSON.stringify(buttons));
-                    await env.KV.delete(setupKey);
-                    await sendMessage(botToken, chatId, `✅ ${buttons.length} buttons updated successfully\\!`);
-                } else {
-                    await sendMessage(botToken, chatId, '❌ Invalid format\\. Please send buttons in \\\`Label | Link\\\` format, one per line\\.');
-                }
-                return;
-            }
-
-            if (setupState.type === 'gbroadcast_collect') {
-                const broadcastData = {
-                    from_chat_id: chatId,
-                    message_id: msg.message_id
-                };
-                await env.KV.put(setupState.id, JSON.stringify(broadcastData), { expirationTtl: 3600 });
-                await env.KV.delete(setupKey);
-
-                await sendMessage(botToken, chatId, '📋 *Global Broadcast Preview:*', { parse_mode: 'MarkdownV2' });
-                await copyMessage(botToken, chatId, chatId, msg.message_id, {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: '🚀 Confirm Global Send', callback_data: `confirm_gbroadcast:${setupState.id}` },
-                                { text: '❌ Cancel', callback_data: `cancel_gbroadcast:${setupState.id}` }
-                            ]
-                        ]
-                    }
-                });
-                return;
-            }
-
-            if (setupState.type === 'channel') {
-                let channelId = null;
-                if (msg.forward_from_chat) {
-                    channelId = msg.forward_from_chat.id.toString();
-                } else if (text.startsWith('-100')) {
-                    channelId = text.trim();
-                }
-
-                if (channelId) {
-                    await env.KV.put(`bot:${ctx.bot_id}:config:channel_id`, channelId);
-                    await env.KV.delete(setupKey);
-                    await sendMessage(botToken, chatId, `✅ Channel linked successfully\\! ID: \\\`${channelId}\\\`\\nMake sure the bot is an admin in that channel\\.`, { parse_mode: 'MarkdownV2' });
-                } else {
-                    await sendMessage(botToken, chatId, '❌ Invalid channel\\. Please forward a message from the channel or send the correct ID\\.');
-                }
-                return;
-            }
-
-            if (setupState.type === 'clone_collect') {
-                const token = text.trim();
-                if (!/^\d+:[\w-]+$/.test(token)) {
-                    await sendMessage(botToken, chatId, '❌ Invalid bot token format\\. It should look like \\\`12345:6789ABCDEF\\\`\\.');
-                    return;
-                }
-
-                try {
-                    const meResponse = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-                    const meData = await meResponse.json();
-                    if (!meData.ok) throw new Error(meData.description || 'Invalid token');
-                    const botInfo = meData.result;
-
-                    const secretRef = Math.random().toString(36).substring(2, 15);
-                    await env.D1.prepare('INSERT INTO clones (token, owner_id, bot_username, secret_ref, status, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-                        .bind(token, userId, botInfo.username, secretRef, 'pending', Math.floor(Date.now() / 1000))
-                        .run();
-
-                    await env.KV.delete(setupKey || `bot:${ctx.bot_id}:setup:${userId}`);
-                    await sendMessage(botToken, chatId, `✅ Request sent\\! Your bot @${escapeMarkdown(botInfo.username)} is now pending approval from the Super Admin\\.`, { parse_mode: 'MarkdownV2' });
-
-                    // Notify Super Admin on Main Bot
-                    const superAdminMsg = `🆕 *New Clone Request\\!*\n\n👤 *User:* [${escapeMarkdown(firstName)}](tg://user?id=${userId})\n🤖 *Bot:* @${escapeMarkdown(botInfo.username)}\n🔑 *Token:* \\\`${escapeMarkdown(token)}\\\`\n\nApprove this bot?`;
-                    await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, superAdminMsg, {
-                        parse_mode: 'MarkdownV2',
-                        reply_markup: {
-                            inline_keyboard: [
-                                [
-                                    { text: '✅ Approve', callback_data: `approve_clone:${secretRef}` },
-                                    { text: '❌ Reject', callback_data: `reject_clone:${secretRef}` }
-                                ]
-                            ]
-                        }
-                    });
-                } catch (err) {
-                    await sendMessage(botToken, chatId, `❌ Error verifying token: ${escapeMarkdown(err.message)}\\. Please make sure the token is correct\\.`, { parse_mode: 'MarkdownV2' });
-                }
-                return;
-            }
-        }
-    }
-
-    // Commands handle
     if (text.startsWith('/')) {
         const fullCommand = text.trim();
         const command = fullCommand.split(/\s+/)[0].toLowerCase().split('@')[0];
+        if (await handleAdminCommands(msg, env, ctx, { command, fullCommand })) return;
+    }
 
-        if (command === '/clone') {
-            await env.KV.put(setupKey || `bot:${ctx.bot_id}:setup:${userId}`, JSON.stringify({ type: 'clone_collect' }), { expirationTtl: 600 });
-            const message = "To connect a bot, you should follow these two steps:\\n\\n1\\. Open @BotFather and create a new bot\\.\\n2\\. You\\'ll get a token \\(e\\.g\\. 12345:6789ABCDEF\\) — copy\\-paste it to this chat\\.\\n\\nWarning\\! Don\\'t connect bots already used by other services\\.";
-            await sendMessage(botToken, chatId, message);
-            return;
-        }
+    if (isAdmin && (text.startsWith('!') || text.startsWith('.') || (msg.caption && (msg.caption.startsWith('!') || msg.caption.startsWith('.'))))) {
+        const targetId = await env.KV.get(`bot:${bot_id}:last_target:${admin_id}`);
+        if (!targetId) return await sendMessage(bot_token, msg.chat.id, MESSAGES.NO_LAST_TARGET);
 
-        if (isSuperAdmin && ctx.bot_id === 0 && command === '/req') {
-            const { results: pending } = await env.D1.prepare('SELECT * FROM clones WHERE status = ? ORDER BY id ASC').bind('pending').all();
-            if (!pending.length) {
-                await sendMessage(botToken, chatId, 'No pending clone requests\\.');
-                return;
-            }
-            let text = '⏳ *Pending Clone Requests:*\n\n';
-            for (let i = 0; i < pending.length; i++) {
-                const req = pending[i];
-                const index = i + 1;
-                const ownerInfo = req.bot_username ? `@${escapeMarkdown(req.bot_username)}` : `[${escapeMarkdown(firstName)}](tg://user?id=${req.owner_id})`;
-                text += `${index}\\. ${ownerInfo} \\(Owner: \\\`${req.owner_id}\\\`\\)\\n   /approve\\_${index}  |  /reject\\_${index}\\n\\n`;
-            }
-            await sendMessage(botToken, chatId, text, { parse_mode: 'MarkdownV2' });
-            return;
-        }
+        const content = (text || msg.caption || '').substring(1).trim();
+        if (!content && !msg.photo && !msg.sticker && !msg.video && !msg.animation && !msg.document) return await sendMessage(bot_token, msg.chat.id, MESSAGES.QUICK_REPLY_EMPTY);
 
-        if (isSuperAdmin && ctx.bot_id === 0 && command === '/clones') {
-            try {
-                const { results } = await env.D1.prepare('SELECT id, token, owner_id, bot_username FROM clones WHERE status = ? ORDER BY id ASC').bind('active').all();
-                if (!results.length) {
-                    await sendMessage(botToken, chatId, 'No active bots found\\.');
-                    return;
-                }
-                const clonesList = results.map((c, i) => `• @${escapeMarkdown(c.bot_username)} \\(Owner: \\\`${c.owner_id}\\\`\\)\\n  ID: ${i + 1} | /delclone\\_${i + 1}`).join('\n\n');
-                await sendMessage(botToken, chatId, `🚀 *Active Clones:*\n\n${clonesList}`, { parse_mode: 'MarkdownV2' });
-            } catch (err) {
-                await sendErrorToAdmin(env, ctx, `Error fetching active clones: ${err.message}`);
-            }
-            return;
-        }
+        const quickMsg = { ...msg };
+        if (msg.text) quickMsg.text = content;
+        if (msg.caption) quickMsg.caption = content;
 
-        if (isSuperAdmin && ctx.bot_id === 0 && command.startsWith('/approve_')) {
-            const index = parseInt(command.replace('/approve_', ''), 10);
-            const { results: pending } = await env.D1.prepare('SELECT secret_ref FROM clones WHERE status = ? ORDER BY id ASC').bind('pending').all();
-            if (pending[index - 1]) {
-                await handleCloneAction(null, pending[index - 1].secret_ref, 'approve', env, ctx);
-            } else {
-                await sendMessage(botToken, chatId, '❌ Invalid request number.');
-            }
-            return;
-        }
-
-        if (isSuperAdmin && ctx.bot_id === 0 && command.startsWith('/reject_')) {
-            const index = parseInt(command.replace('/reject_', ''), 10);
-            const { results: pending } = await env.D1.prepare('SELECT secret_ref FROM clones WHERE status = ? ORDER BY id ASC').bind('pending').all();
-            if (pending[index - 1]) {
-                await handleCloneAction(null, pending[index - 1].secret_ref, 'reject', env, ctx);
-            } else {
-                await sendMessage(botToken, chatId, '❌ Invalid request number.');
-            }
-            return;
-        }
-
-        if (isSuperAdmin && ctx.bot_id === 0 && command.startsWith('/delclone_')) {
-            const index = parseInt(command.replace('/delclone_', ''), 10);
-            const { results: activeClones } = await env.D1.prepare('SELECT id FROM clones WHERE status = ? ORDER BY id ASC').bind('active').all();
-            if (activeClones[index - 1]) {
-                await handleCloneAction(activeClones[index - 1].id, null, 'delete', env, ctx);
-            } else {
-                await sendMessage(botToken, chatId, '❌ Invalid clone number\\.');
-            }
-            return;
-        }
-
-        if (command === '/start') {
-            const welcomeConfig = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:welcome`) || 'null');
-            const buttonConfig = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || 'null');
-
-            if (!welcomeConfig) {
-                const greeting = "Hey there\\! You can contact us using this bot, just send your message and we will get back to you as soon as possible\\.";
-                await sendMessage(botToken, chatId, greeting, {
-                    reply_markup: buildKeyboard(buttonConfig)
-                });
-            } else {
-                // Multi-message welcome
-                for (let i = 0; i < welcomeConfig.length; i++) {
-                    const item = welcomeConfig[i];
-                    const isLast = i === welcomeConfig.length - 1;
-                    const reply_markup = isLast ? buildKeyboard(buttonConfig) : undefined;
-
-                    if (item.type === 'text') {
-                        await sendMessage(botToken, chatId, item.content, { reply_markup });
-                    } else {
-                        const msgForMedia = { [item.type]: item.file_id, caption: item.caption };
-                        await sendMedia(botToken, chatId, msgForMedia, { reply_markup });
-                    }
-                }
-            }
-            console.log(`Start command took ${Date.now() - startTime}ms`);
-        } else if (command === '/help' || command === '/cmd' || command === '/cmds') {
-            // Check if user owns any clone (for better /help response)
-            const cloneOwnership = await env.D1.prepare('SELECT COUNT(*) as count FROM clones WHERE owner_id = ? AND status = ?').bind(userId, 'active').first();
-            const hasClone = cloneOwnership.count > 0;
-
-            if (!isAdmin && !hasClone) {
-                await sendMessage(botToken, chatId, "You don\\'t have a clone\\.\\n\\nFor help contact owner @thv\\_haru\\.");
-                return;
-            }
-
-            const helpText = [
-                `📖 *Available Commands*`,
-                ``,
-                `👤 *Public*`,
-                `• /start \\- Start the bot`,
-                `• /clone \\- Request your own bot clone`,
-                `• /help \\- Get help & contact info`,
-                ``,
-                isAdmin ? `\\n🛡️ *Admin Only*` : '',
-                isAdmin ? `• /broadcast \\- Send message to all users` : '',
-                isAdmin ? `• /setwelcome \\- Customize welcome greeting` : '',
-                isAdmin ? `• /setbuttons \\- Customize start buttons` : '',
-                isAdmin ? `• /setchannel \\- Link channel for auto-forwarding` : '',
-                isAdmin ? `• /delchannel \\- Remove linked channel` : '',
-                isAdmin ? `• /delwelcome \\- Reset welcome message` : '',
-                isAdmin ? `• /delbuttons \\- Remove specific buttons` : '',
-                isAdmin ? `• /userlist \\- List bot users` : '',
-                isAdmin ? `• /block \\- \\(reply\\) Block a user` : '',
-                isAdmin ? `• /unblock \\- Unblock a user` : '',
-                isAdmin ? `• /cancel \\- Cancel current setup` : '',
-                ``,
-                isSuperAdmin && ctx.bot_id === 0 ? `\\n👑 *Super Admin Only*` : '',
-                isSuperAdmin && ctx.bot_id === 0 ? `• /gbroadcast \\- Global broadcast to ALL clones` : '',
-                isSuperAdmin && ctx.bot_id === 0 ? `• /cbroadcast \\- Message all clone owners` : '',
-                isSuperAdmin && ctx.bot_id === 0 ? `• /status \\- Server diagnostics` : '',
-                isSuperAdmin && ctx.bot_id === 0 ? `• /req \\- View pending clone requests` : '',
-                isSuperAdmin && ctx.bot_id === 0 ? `• /clones \\- Manage active clones` : '',
-                ``,
-                `For further help contact owner @thv\\_haru`
-            ].filter(Boolean).join('\n');
-            await sendMessage(botToken, chatId, helpText, { parse_mode: 'MarkdownV2' });
-        } else if (isSuperAdmin && ctx.bot_id === 0 && command === '/status') {
-            const channelId = await env.KV.get(`bot:${ctx.bot_id}:config:channel_id`);
-            let channelDisplay = '\\\`NONE\\\`';
-            if (channelId) {
-                try {
-                    const chat = await getChat(botToken, channelId);
-                    const title = escapeMarkdown(chat.title || 'Channel');
-                    const link = chat.username ? `https://t.me/${chat.username}` : `https://t.me/c/${channelId.replace('-100', '')}`;
-                    channelDisplay = `[${title}](${link}) (\\\`${channelId}\\\`)`;
-                } catch (e) {
-                    channelDisplay = `\\\`${channelId}\\\` \\(Unable to fetch info\\)`;
-                }
-            }
-            const statusText = [
-                `ℹ️ *Bot Status*`,
-                ``,
-                `• Bot ID: \`${ctx.bot_id}\``,
-                `• Your ID: \`${userId}\``,
-                `• Channel: ${channelDisplay}`,
-                `• Admin: \`${adminId}\``,
-                `• Super Admin: \`${ctx.super_admin_id}\``,
-                ``,
-                `_Command menu synchronized for this bot_`
-            ].join('\n');
-            await setMyCommands(botToken);
-            await sendMessage(botToken, chatId, statusText, { parse_mode: 'MarkdownV2', disable_web_page_preview: true });
-            return;
-        } else if (isAdmin && command === '/userlist') {
-            await sendUserList(botToken, chatId, env.D1, ctx.bot_id);
-        } else if (isAdmin && command === '/debug_messages') {
-            await debugMessages(botToken, chatId, env.D1, ctx.bot_id);
-        } else if (isAdmin && command === '/block' && msg.reply_to_message?.message_id) {
-            let targetId;
-
-            // Try to get user_id from messages table
-            const { results } = await env.D1.prepare('SELECT user_id FROM messages WHERE admin_msg_id = ? AND bot_id = ?').bind(msg.reply_to_message.message_id, ctx.bot_id).all();
-            if (results.length) {
-                targetId = results[0].user_id;
-            } else if (msg.reply_to_message.forward_from?.id) {
-                targetId = msg.reply_to_message.forward_from.id;
-            } else {
-                await sendErrorToAdmin(botToken, adminId, `Cannot block: no user_id found for admin_msg_id=${msg.reply_to_message.message_id} and missing forward_from data`);
-                return;
-            }
-
-            // Validate user exists and get name
-            const { results: userResults } = await env.D1.prepare('SELECT user_id, username, first_name FROM users WHERE user_id = ? AND bot_id = ?').bind(targetId, ctx.bot_id).all();
-            if (!userResults.length) {
-                await sendErrorToAdmin(botToken, adminId, `Cannot block: user ${targetId} not found in users table for this bot`);
-                return;
-            }
-            targetName = formatUsername(userResults[0].username) || userResults[0].first_name;
-
-            if (targetId.toString() === adminId) {
-                await sendErrorToAdmin(botToken, adminId, `Cannot block admin (user_id=${adminId})`);
-                return;
-            }
-
-            try {
-                await env.D1.prepare('INSERT OR IGNORE INTO blocked_users (user_id, bot_id) VALUES (?, ?)').bind(targetId, ctx.bot_id).run();
-                await Promise.all([
-                    sendMessage(botToken, targetId, 'You have been blocked from using this bot\\.'),
-                    sendMessage(botToken, adminId, `✅ User ${targetName} blocked\\.`),
-                    env.KV.put(`bot:${ctx.bot_id}:last_target:${adminId}`, targetId.toString(), { expirationTtl: 86400 })
-                ]);
-                console.log(`D1 INSERT blocked_users, user_id=${targetId} (${Date.now() - startTime}ms)`);
-            } catch (err) {
-                console.error(`Block error for user ${targetId}: ${err.message}`);
-                await sendErrorToAdmin(botToken, adminId, `Failed to block user ${targetId} (${targetName}): ${err.message}`);
-            }
-        } else if (isAdmin && command === '/unblock') {
-            let targetId;
-            let targetName;
-
-            if (msg.reply_to_message?.message_id) {
-                const { results } = await env.D1.prepare('SELECT user_id FROM messages WHERE admin_msg_id = ?').bind(msg.reply_to_message.message_id).all();
-                if (results.length) {
-                    targetId = results[0].user_id;
-                } else if (msg.reply_to_message.forward_from?.id) {
-                    targetId = msg.reply_to_message.forward_from.id;
-                } else {
-                    await sendErrorToAdmin(botToken, adminId, `Cannot unblock: no user_id found for admin_msg_id=${msg.reply_to_message.message_id} and missing forward_from data`);
-                    return;
-                }
-            } else {
-                const unblockArg = fullCommand.replace('/unblock', '').trim();
-                if (!unblockArg) {
-                    await sendMessage(botToken, chatId, 'Please provide a username \\(e\\.g\\., @username\\) or user ID, or reply to a forwarded message\\. Usage: /unblock <username/user\\_id>');
-                    return;
-                }
-                if (unblockArg.startsWith('@')) {
-                    const usernameToFind = unblockArg.substring(1); // Remove '@'
-                    const { results } = await env.D1.prepare('SELECT user_id, username, first_name FROM users WHERE username = ?').bind(usernameToFind).all();
-                    if (!results.length) {
-                        await sendMessage(botToken, chatId, `User @${escapeMarkdown(usernameToFind)} not found\\.`);
-                        return;
-                    }
-                    targetId = results[0].user_id;
-                    targetName = formatUsername(results[0].username) || results[0].first_name;
-                } else {
-                    targetId = parseInt(unblockArg, 10);
-                    if (isNaN(targetId)) {
-                        await sendMessage(botToken, chatId, 'Invalid user ID\\. Please provide a valid number or username\\.');
-                        return;
-                    }
-                }
-            }
-
-            // Validate user exists if not already set
-            if (!targetName) {
-                const { results: userResults } = await env.D1.prepare('SELECT user_id, username, first_name FROM users WHERE user_id = ?').bind(targetId).all();
-                if (!userResults.length) {
-                    await sendMessage(botToken, chatId, `User with ID ${targetId} not found\\.`);
-                    return;
-                }
-                targetName = formatUsername(userResults[0].username) || userResults[0].first_name;
-            }
-
-            if (targetId.toString() === adminId) {
-                await sendErrorToAdmin(botToken, adminId, `Cannot unblock admin (user_id=${adminId})`);
-                return;
-            }
-
-            try {
-                const { success } = await env.D1.prepare('DELETE FROM blocked_users WHERE user_id = ? AND bot_id = ?').bind(targetId, ctx.bot_id).run();
-                if (success) {
-                    await sendMessage(botToken, chatId, `✅ User ${targetName} unblocked\\.`);
-                    // Track last target for shortcut (!.)
-                    await env.KV.put(`bot:${ctx.bot_id}:last_target:${adminId}`, targetId.toString(), { expirationTtl: 86400 });
-                    console.log(`D1 DELETE blocked_users, user_id=${targetId} bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
-                } else {
-                    await sendMessage(botToken, chatId, `User ${targetName} was not blocked on this bot\\.`);
-                }
-            } catch (err) {
-                console.error(`Unblock error for user ${targetId}: ${err.message}`);
-                await sendErrorToAdmin(botToken, adminId, `Failed to unblock user ${targetId} (${targetName}): ${err.message}`);
-            }
-        } else if (isAdmin && command === '/delchannel') {
-            await env.KV.delete(`bot:${ctx.bot_id}:config:channel_id`);
-            await sendMessage(botToken, chatId, '✅ Linked channel removed\\.');
-            return;
-        } else if (isSuperAdmin && ctx.bot_id === 0 && command === '/cbroadcast') {
-            await env.KV.put(`bot:${ctx.bot_id}:broadcast:${adminId}`, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
-            await sendMessage(botToken, chatId, '📢 *Owner Broadcast Mode*\n\nSend me the message you want to broadcast to EVERY clone owner\\.', { parse_mode: 'MarkdownV2' });
-            return;
-        } else if (isSuperAdmin && ctx.bot_id === 0 && command === '/gbroadcast') {
-            const setupId = `gbroadcast:${Date.now()}`;
-            await env.KV.put(`bot:${ctx.bot_id}:setup:${userId}`, JSON.stringify({ type: 'gbroadcast_collect', id: setupId }), { expirationTtl: 600 });
-            await sendMessage(botToken, chatId, '📢 *Global Broadcast Mode*\n\nSend me the message you want to broadcast to EVERY user in EVERY cloned bot\\.', { parse_mode: 'MarkdownV2' });
-            return;
-        } else if (isAdmin && command === '/broadcast') {
-            await env.KV.put(`bot:${ctx.bot_id}:broadcast:${adminId}`, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
-            await sendMessage(botToken, adminId, 'Please send the message or media you want to broadcast\\. You can also *forward* a message from a channel here\\.', { parse_mode: 'MarkdownV2' });
-            console.log(`KV PUT bot:${ctx.bot_id}:broadcast:${adminId} (${Date.now() - startTime}ms)`);
-        } else if (isAdmin && command === '/setwelcome') {
-            await env.KV.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'welcome_count' }), { expirationTtl: 600 });
-            await sendMessage(botToken, adminId, 'How many welcome messages do you want? \\(1 or 2\\)');
-        } else if (isAdmin && command === '/setbuttons') {
-            await env.KV.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'buttons' }), { expirationTtl: 600 });
-            const help = 'Please send your buttons. You can use any format, e.g.:\n`Join Channel | @mychannel`\n`Support | t.me/user`';
-            await sendMessage(botToken, adminId, help, { parse_mode: 'MarkdownV2' });
-        } else if (isAdmin && command === '/setchannel') {
-            await env.KV.put(`bot:${ctx.bot_id}:setup:${adminId}`, JSON.stringify({ type: 'channel' }), { expirationTtl: 600 });
-            await sendMessage(botToken, adminId, 'Please forward a message FROM the channel you want to link, or send the Channel ID \\(starting with \\-100\\)\\.');
-        } else if (isAdmin && command === '/delwelcome') {
-            await Promise.all([
-                env.KV.delete(`bot:${ctx.bot_id}:config:welcome`),
-                env.KV.delete(`bot:${ctx.bot_id}:config:buttons`)
-            ]);
-            await sendMessage(botToken, adminId, '✅ Welcome message and buttons have been reset to default\\.');
-        } else if (isAdmin && command === '/delbuttons') {
-            const buttons = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || '[]');
-            if (!buttons.length) {
-                await sendMessage(botToken, adminId, 'No buttons to delete\\.');
-                return;
-            }
-            const keyboard = [];
-            for (let i = 0; i < buttons.length; i++) {
-                keyboard.push([{ text: `🗑️ ${buttons[i].text}`, callback_data: `delete_btn:${i}` }]);
-            }
-            await sendMessage(botToken, adminId, 'Select a button to delete:', {
-                reply_markup: { inline_keyboard: keyboard }
-            });
-        } else if (isAdmin) {
-            // Handle other slash commands if needed or just ignore
-        }
+        const res = await (await sendMedia(bot_token, targetId, quickMsg)).json();
+        if (res.ok) await sendMessage(bot_token, msg.chat.id, MESSAGES.QUICK_REPLY_SENT(targetId), { parse_mode: 'MarkdownV2', auto_escape: false });
         return;
     }
 
-    // Admin reply handler
-    if (isAdmin && msg.reply_to_message && msg.reply_to_message.message_id) {
-        const refId = msg.reply_to_message.message_id;
-        let userId, userMsgId, targetName;
-
-        // Try to get user details from database using admin_msg_id
-        let results = [];
-        try {
-            const query = await env.D1.prepare('SELECT user_id, user_msg_id FROM messages WHERE admin_msg_id = ? AND bot_id = ?').bind(refId, ctx.bot_id).all();
-            results = query.results;
-            console.log(`D1 SELECT messages for admin_msg_id=${refId} bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
-        } catch (err) {
-            console.error(`Database query error for admin_msg_id=${refId}: ${err.message}`);
-            await sendErrorToAdmin(env, ctx, `Database query error for admin_msg_id=${refId}: ${err.message}`);
-            return;
-        }
-
-        if (results.length) {
-            userId = results[0].user_id;
-            userMsgId = parseInt(results[0].user_msg_id, 10);
-        } else if (msg.reply_to_message.forward_from?.id) {
-            // Fallback: use forward_from.id if available
-            userId = msg.reply_to_message.forward_from.id;
-            const fallbackQuery = await env.D1.prepare('SELECT user_msg_id FROM messages WHERE user_id = ? AND bot_id = ? ORDER BY created_at DESC LIMIT 1').bind(userId, ctx.bot_id).all();
-            if (fallbackQuery.results.length) {
-                userMsgId = parseInt(fallbackQuery.results[0].user_msg_id, 10);
-                console.log(`Fallback D1 SELECT messages for user_id=${userId} bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
-            } else {
-                userMsgId = null;
-                console.warn(`No database entry for admin_msg_id=${refId} or user_id=${userId}`);
-            }
-        } else {
-            await sendErrorToAdmin(env, ctx, `Cannot reply: no database entry for admin_msg_id=${refId} and missing forward_from data, type=${msg.text ? 'text' : 'media'}`);
-            return;
-        }
-
-        // Validate user exists in users table
-        const { results: userResults } = await env.D1.prepare('SELECT user_id, username, first_name FROM users WHERE user_id = ? AND bot_id = ?').bind(userId, ctx.bot_id).all();
-        if (!userResults.length) {
-            await sendErrorToAdmin(env, ctx, `User ${userId} not found in users table for bot ${ctx.bot_id}`);
-            return;
-        }
-        targetName = formatUsername(userResults[0].username) || userResults[0].first_name;
-
-        // Check if user is blocked
-        const { results: blockedResults } = await env.D1.prepare('SELECT user_id FROM blocked_users WHERE user_id = ? AND bot_id = ?').bind(userId, ctx.bot_id).all();
-        if (blockedResults.length) {
-            await sendErrorToAdmin(env, ctx, `Cannot reply to blocked user ${userId} (${targetName}), admin_msg_id=${refId}`);
-            return;
-        }
-
-        if (!userId || (userMsgId && isNaN(userMsgId))) {
-            await sendErrorToAdmin(env, ctx, `Invalid data for reply: user_id=${userId}, user_msg_id=${userMsgId}, admin_msg_id=${refId}, message_type=${msg.text ? 'text' : msg.sticker ? 'sticker' : msg.photo ? 'photo' : msg.animation ? 'animation' : msg.video ? 'video' : msg.document ? 'document' : 'unknown'}`);
-            return;
-        }
-
-        if (userId.toString() === adminId) {
-            await sendErrorToAdmin(env, ctx, `Cannot reply to self (admin_id=${adminId}), admin_msg_id=${refId}`);
-            return;
-        }
-
-        let attempts = 0;
-        const maxAttempts = 5;
-        while (attempts < maxAttempts) {
-            try {
-                // Verify user is reachable
-                const testResponse = await sendMessage(botToken, userId, 'Test connectivity', { disable_notification: true, parse_mode: undefined });
-                const testResult = await testResponse.json();
-                if (!testResult.ok) {
-                    throw new Error(`User ${userId} unreachable: ${testResult.description}`);
-                }
-                await deleteMessage(botToken, userId, testResult.result.message_id);
-
-                const replyOpts = userMsgId ? { reply_to_message_id: userMsgId } : {};
-                if (msg.caption) {
-                    replyOpts.caption = escapeMarkdown(msg.caption);
-                    replyOpts.parse_mode = 'MarkdownV2';
-                }
-
-                let response;
-                try {
-                    response = await sendMedia(botToken, userId, msg, replyOpts);
-                } catch (err) {
-                    if (err.message.includes("can't parse entities")) {
-                        console.log(`MarkdownV2 parsing failed for user ${userId}, message_type=${msg.text ? 'text' : msg.sticker ? 'sticker' : msg.photo ? 'photo' : msg.animation ? 'animation' : msg.video ? 'video' : msg.document ? 'document' : 'unknown'}, text/caption="${msg.text || msg.caption || 'none'}"`);
-                        replyOpts.parse_mode = undefined;
-                        if (msg.caption) replyOpts.caption = msg.caption;
-                        if (msg.text) msg.text = msg.text;
-                        response = await sendMedia(botToken, userId, msg, replyOpts);
-                    } else {
-                        throw err;
-                    }
-                }
-
-                const result = await response.json();
-                if (!result.ok) {
-                    throw new Error(`Telegram API error: ${result.description}`);
-                }
-
-                const displayName = [firstName, username].filter(Boolean).join(' ');
-                const profileLink = `[${escapeMarkdown(userResults[0].first_name || 'User')}](tg://user?id=${userId})`;
-                await sendMessage(botToken, adminId, `✅ Replied to ${profileLink}`, { parse_mode: 'MarkdownV2' });
-
-                // Track last target for shortcut (!.)
-                await env.KV.put(`bot:${ctx.bot_id}:last_target:${adminId}`, userId.toString(), { expirationTtl: 86400 });
-
-                console.log(`Reply sent to user ${userId}, message_id=${result.result.message_id}, type=${msg.text ? 'text' : msg.sticker ? 'sticker' : msg.photo ? 'photo' : msg.animation ? 'animation' : msg.video ? 'video' : msg.document ? 'document' : 'unknown'}, admin_msg_id=${refId} (${Date.now() - startTime}ms)`);
-                break;
-            } catch (err) {
-                attempts++;
-                console.error(`Reply attempt ${attempts} failed for user ${userId} (${targetName}): ${err.message}, message_type=${msg.text ? 'text' : msg.sticker ? 'sticker' : msg.photo ? 'photo' : msg.animation ? 'animation' : msg.video ? 'video' : msg.document ? 'document' : 'unknown'}, admin_msg_id=${refId}`);
-                if (attempts === maxAttempts) {
-                    await sendErrorToAdmin(env, ctx, `Failed to send reply to user ${userId} after ${maxAttempts} attempts: ${err.message}`);
-                }
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-        }
-        return;
-    }
-
-    // Broadcast message handler
-    if (isAdmin && broadcastState === 'pending') {
-        await env.KV.delete(broadcastKey);
-        const broadcastId = `bot:${ctx.bot_id}:broadcast_data:${Date.now()}`;
-
-        await env.KV.put(broadcastId, JSON.stringify({
-            from_chat_id: chatId,
-            message_id: msg.message_id
-        }), { expirationTtl: 3600 });
-
-        await copyMessage(botToken, adminId, chatId, msg.message_id, {
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: '✅ Confirm', callback_data: `confirm_broadcast:${broadcastId}` },
-                        { text: '❌ Cancel', callback_data: `cancel_broadcast:${broadcastId}` }
-                    ]
-                ]
-            }
-        });
-        console.log(`KV PUT ${broadcastId} (${Date.now() - startTime}ms)`);
-        return;
-    }
-
-    // Normal user message → forward to admin
-    if (!isAdmin) {
-        const forwardPromise = (async () => {
-            try {
-                const fwd = await forwardMessage(botToken, adminId, chatId, msg.message_id);
-                const res = await fwd.json();
-                if (res.ok) {
-                    const adminMsgId = res.result.message_id;
-                    const { results } = await env.D1.prepare('SELECT user_id FROM messages WHERE admin_msg_id = ? AND bot_id = ?').bind(adminMsgId, ctx.bot_id).all();
-                    if (!results.length) {
-                        await env.D1.prepare('INSERT INTO messages (admin_msg_id, user_id, user_msg_id, bot_id, created_at) VALUES (?, ?, ?, ?, ?)').bind(adminMsgId, userId, msg.message_id, ctx.bot_id, Math.floor(Date.now() / 1000)).run();
-                        console.log(`D1 INSERT messages: admin_msg_id=${adminMsgId}, bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
-                    } else {
-                        console.warn(`Duplicate message entry for admin_msg_id=${adminMsgId}, skipping insert`);
-                    }
-                } else {
-                    throw new Error(`Failed to forward message: ${res.description}`);
-                }
-            } catch (err) {
-                await sendErrorToAdmin(env, ctx, `Forward error for user ${userId}: ${err.message}`);
-            }
-        })();
-
-        const confirmationPromise = (async () => {
-            try {
-                const confirmationResponse = await sendMessage(botToken, chatId, 'ˢᵉⁿᵗ ✅');
-                const confirmationResult = await confirmationResponse.json();
-                if (confirmationResult.ok) {
-                    const messageId = confirmationResult.result.message_id;
-                    const confirmationKey = `bot:${ctx.bot_id}:confirmation:${userId}`;
-                    await env.KV.put(confirmationKey, messageId.toString(), { expirationTtl: 86400 });
-                    console.log(`Confirmation sent bot_id=${ctx.bot_id} (${Date.now() - startTime}ms)`);
-                } else {
-                    throw new Error(`Failed to send confirmation: ${confirmationResult.description}`);
-                }
-            } catch (err) {
-                await sendErrorToAdmin(env, ctx, `Confirmation error for user ${userId}: ${err.message}`);
-            }
-        })();
-
-        const userPromise = (async () => {
-            // Normalize username: remove leading @ if present to keep it consistent in DB
-            const cleanUsername = username ? (username.startsWith('@') ? username.substring(1) : username) : '';
-            await env.D1.prepare('INSERT INTO users (user_id, username, first_name, bot_id) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, bot_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name')
-                .bind(userId, cleanUsername, firstName, ctx.bot_id)
-                .run();
-        })();
-
-        await Promise.all([forwardPromise, confirmationPromise, userPromise]);
-    }
-
-    // Cleanup old messages (5% probability)
-    if (Math.random() < 0.05) {
-        const cutoff = Math.floor(Date.now() / 1000) - 1296000; // 15 days
-        await env.D1.prepare('DELETE FROM messages WHERE created_at < ?').bind(cutoff).run();
-        console.log(`D1 DELETE old messages (${Date.now() - startTime}ms)`);
-    }
-
-    console.log(`Message handling took ${Date.now() - startTime}ms`);
+    if (isAdmin && msg.reply_to_message && await handleReplyFlow(msg, env, ctx)) return;
+    if (!isAdmin) await handleUserMessage(msg, env, ctx);
 }
 
 async function handleCallbackQuery(query, env, ctx) {
-    const startTime = Date.now();
-    const botToken = ctx.bot_token;
-    const adminId = ctx.admin_id;
+    const { bot_token, admin_id, bot_id, super_admin_id } = ctx;
     const chatId = query.message.chat.id;
     const messageId = query.message.message_id;
     const data = query.data;
 
-    if (query.from.id.toString() !== adminId && query.from.id.toString() !== ctx.super_admin_id) {
-        await answerCallbackQuery(botToken, query.id, 'Only admin can manage this bot.');
-        return;
+    if (query.from.id.toString() !== admin_id && query.from.id.toString() !== super_admin_id) {
+        return await answerCallbackQuery(bot_token, query.id, 'Only admin can manage this bot.');
     }
 
-    if (data === 'save_welcome') {
-        const setupKey = `bot:${ctx.bot_id}:setup:${adminId}`;
-        const setupState = JSON.parse(await env.KV.get(setupKey) || 'null');
-        if (setupState?.type === 'welcome_collect') {
-            await env.KV.put(`bot:${ctx.bot_id}:config:welcome`, JSON.stringify(setupState.messages));
-            await env.KV.delete(setupKey);
-            await sendMessage(botToken, adminId, '✅ Welcome messages updated and live\\!');
-            await answerCallbackQuery(botToken, query.id, 'Saved!');
-        } else {
-            await answerCallbackQuery(botToken, query.id, 'No setup in progress.');
-        }
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    } else if (data === 'cancel_welcome') {
-        await env.KV.delete(`bot:${ctx.bot_id}:setup:${adminId}`);
-        await sendMessage(botToken, adminId, '❌ Setup cancelled\\.');
-        await answerCallbackQuery(botToken, query.id, 'Cancelled.');
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    } else if (data.startsWith('delete_btn:')) {
-        const index = parseInt(data.split(':')[1], 10);
-        const buttons = JSON.parse(await env.KV.get(`bot:${ctx.bot_id}:config:buttons`) || '[]');
-        if (buttons[index]) {
-            const removed = buttons.splice(index, 1);
-            await env.KV.put(`bot:${ctx.bot_id}:config:buttons`, JSON.stringify(buttons));
-            await answerCallbackQuery(botToken, query.id, `Deleted: ${removed[0].text}`);
-
-            // Refresh the list or delete message
-            if (buttons.length > 0) {
-                const keyboard = [];
-                for (let i = 0; i < buttons.length; i++) {
-                    keyboard.push([{ text: `🗑️ ${buttons[i].text}`, callback_data: `delete_btn:${i}` }]);
-                }
-                await fetch(`https://api.telegram.org/bot${botToken}/editMessageReplyMarkup`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        chat_id: chatId,
-                        message_id: messageId,
-                        reply_markup: { inline_keyboard: keyboard }
-                    })
-                });
-            } else {
-                await deleteMessage(botToken, chatId, messageId);
-                await sendMessage(botToken, adminId, 'All buttons deleted\\.');
+    try {
+        if (data === 'save_welcome') {
+            const state = JSON.parse(await env.KV.get(`bot:${bot_id}:setup:${admin_id}`) || '{}');
+            if (state.type === 'welcome_collect') {
+                await env.KV.put(`bot:${bot_id}:config:welcome`, JSON.stringify(state.messages));
+                await env.KV.delete(`bot:${bot_id}:setup:${admin_id}`);
+                await sendMessage(bot_token, admin_id, '✅ Welcome messages updated!');
             }
-        }
-        return;
-    } else if (data.startsWith('confirm_gbroadcast:')) {
-        const setupId = data.replace('confirm_gbroadcast:', '');
-        const broadcastData = JSON.parse(await env.KV.get(setupId) || 'null');
-        if (!broadcastData) {
-            await answerCallbackQuery(botToken, query.id, 'Global broadcast data lost.');
-            return;
-        }
-
-        const bots = [{ id: 0, token: env.BOT_TOKEN }];
-        const { results: clones } = await env.D1.prepare('SELECT id, token FROM clones WHERE status = ?').bind('active').all();
-        bots.push(...clones);
-
-        let totalSuccess = 0;
-        let totalFail = 0;
-
-        for (const b of bots) {
-            const { results: users } = await env.D1.prepare(`
-                SELECT u.user_id 
-                FROM users u 
-                LEFT JOIN blocked_users bl ON u.user_id = bl.user_id AND bl.bot_id = ?
-                WHERE bl.user_id IS NULL AND u.bot_id = ?
-            `).bind(b.id, b.id).all();
-
-            const batchSize = 8;
-            for (let i = 0; i < users.length; i += batchSize) {
-                const batch = users.slice(i, i + batchSize);
-                await Promise.all(batch.map(async (user) => {
-                    try {
-                        const res = await copyMessage(b.token, user.user_id, broadcastData.from_chat_id, broadcastData.message_id);
-                        const result = await res.json();
-                        if (result.ok) totalSuccess++; else totalFail++;
-                    } catch (e) {
-                        totalFail++;
-                    }
-                }));
-                await new Promise(r => setTimeout(r, 100)); // Rate limit buffer between batches
+            await deleteMessage(bot_token, chatId, messageId);
+        } else if (data === 'cancel_welcome') {
+            await env.KV.delete(`bot:${bot_id}:setup:${admin_id}`);
+            await deleteMessage(bot_token, chatId, messageId);
+        } else if (data.startsWith('delete_btn:')) {
+            const index = parseInt(data.split(':')[1], 10);
+            const buttons = JSON.parse(await env.KV.get(`bot:${bot_id}:config:buttons`) || '[]');
+            if (buttons[index]) {
+                const removed = buttons.splice(index, 1)[0];
+                await env.KV.put(`bot:${bot_id}:config:buttons`, JSON.stringify(buttons));
+                await answerCallbackQuery(bot_token, query.id, `Deleted ${removed.text}`);
+                if (buttons.length) await fetch(`https://api.telegram.org/bot${bot_token}/editMessageReplyMarkup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: buildKeyboard(buttons) }) });
+                else await deleteMessage(bot_token, chatId, messageId);
             }
+        } else if (data.startsWith('confirm_gbroadcast:')) {
+            const sid = data.split(':')[1];
+            const bdata = JSON.parse(await env.KV.get(sid) || 'null');
+            if (bdata) {
+                await deleteMessage(bot_token, chatId, messageId);
+                const results = await runGlobalBroadcast(env, bdata, ctx);
+                await sendMessage(bot_token, admin_id, MESSAGES.BROADCAST_REPORT(results.success, results.fail), { parse_mode: 'MarkdownV2', auto_escape: false });
+                await env.KV.delete(sid);
+            }
+        } else if (data.startsWith('confirm_broadcast:')) {
+            const bid = data.split(':')[1];
+            const bdata = JSON.parse(await env.KV.get(bid) || 'null');
+            if (bdata) {
+                await deleteMessage(bot_token, chatId, messageId);
+                const results = await runBroadcast(env, bot_id, bot_token, bdata, ctx);
+                await sendMessage(bot_token, admin_id, MESSAGES.BROADCAST_REPORT(results.success, results.fail), { parse_mode: 'MarkdownV2', auto_escape: false });
+                await env.KV.delete(bid);
+            }
+        } else if (data.startsWith('confirm_cbroadcast:')) {
+            const bid = data.split(':')[1];
+            const bdata = JSON.parse(await env.KV.get(bid) || 'null');
+            if (bdata) {
+                await deleteMessage(bot_token, chatId, messageId);
+                const results = await runCloneBroadcast(env, bdata);
+                await sendMessage(bot_token, admin_id, `Broadcast to ${results.success} owners complete.`);
+                await env.KV.delete(bid);
+            }
+        } else if (data.startsWith('approve_clone:')) {
+            await handleCloneAction(null, data.split(':')[1], 'approve', env, ctx);
+            await deleteMessage(bot_token, chatId, messageId);
+        } else if (data.startsWith('reject_clone:')) {
+            await handleCloneAction(null, data.split(':')[1], 'reject', env, ctx);
+            await deleteMessage(bot_token, chatId, messageId);
+        } else if (data.includes('cancel_')) {
+            const bid = data.split(':')[1];
+            if (bid) await env.KV.delete(bid);
+            await deleteMessage(bot_token, chatId, messageId);
         }
-
-        await env.KV.delete(setupId);
-        const report = `📊 *Global Broadcast Final Report*\n✅ Sent: ${totalSuccess}\n❌ Failed: ${totalFail}`;
-        await sendMessage(botToken, adminId, report, { parse_mode: 'MarkdownV2' });
-        await answerCallbackQuery(botToken, query.id, 'Global Send Completed!');
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    } else if (data.startsWith('cancel_gbroadcast:')) {
-        const setupId = data.replace('cancel_gbroadcast:', '');
-        await env.KV.delete(setupId);
-        await sendMessage(botToken, adminId, '❌ Global broadcast cancelled\\.');
-        await answerCallbackQuery(botToken, query.id, 'Cancelled.');
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    } else if (data.startsWith('confirm_cbroadcast:')) {
-        const broadcastId = data.replace('confirm_cbroadcast:', '');
-        const broadcast = JSON.parse(await env.KV.get(broadcastId) || 'null');
-        if (!broadcast) {
-            await answerCallbackQuery(botToken, query.id, 'Broadcast data lost.');
-            return;
-        }
-
-        const { results: owners } = await env.D1.prepare('SELECT DISTINCT owner_id FROM clones').all();
-        let successCount = 0;
-        let failCount = 0;
-
-        const batchSize = 8;
-        for (let i = 0; i < owners.length; i += batchSize) {
-            const batch = owners.slice(i, i + batchSize);
-            await Promise.all(batch.map(async (owner) => {
-                try {
-                    const res = await copyMessage(env.BOT_TOKEN, owner.owner_id, broadcast.from_chat_id, broadcast.message_id);
-                    const result = await res.json();
-                    if (result.ok) successCount++; else failCount++;
-                } catch (e) {
-                    failCount++;
-                }
-            }));
-            await new Promise(r => setTimeout(r, 200));
-        }
-
-        await env.KV.delete(broadcastId);
-        await sendMessage(botToken, adminId, `📊 *Owner Broadcast Report*\n✅ Sent: ${successCount}\n❌ Failed: ${failCount}`, { parse_mode: 'MarkdownV2' });
-        await answerCallbackQuery(botToken, query.id, 'Owners Notified!');
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    } else if (data.startsWith('cancel_cbroadcast:')) {
-        const broadcastId = data.replace('cancel_cbroadcast:', '');
-        await env.KV.delete(broadcastId);
-        await sendMessage(botToken, adminId, '❌ Owner broadcast cancelled\\.');
-        await answerCallbackQuery(botToken, query.id, 'Cancelled.');
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    } else if (data.startsWith('approve_clone:')) {
-        const secretRef = data.split(':')[1];
-        await handleCloneAction(null, secretRef, 'approve', env, ctx);
-        await answerCallbackQuery(botToken, query.id, 'Approving...');
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    } else if (data.startsWith('reject_clone:')) {
-        const secretRef = data.split(':')[1];
-        await handleCloneAction(null, secretRef, 'reject', env, ctx);
-        await answerCallbackQuery(botToken, query.id, 'Rejected.');
-        await deleteMessage(botToken, chatId, messageId);
-        return;
-    }
-
-    if (data.startsWith('confirm_broadcast:')) {
-        const broadcastId = data.replace('confirm_broadcast:', '');
-        let broadcast;
-        try {
-            broadcast = JSON.parse(await env.KV.get(broadcastId));
-        } catch (err) {
-            await sendMessage(botToken, adminId, 'Broadcast message corrupted or not found\\.');
-            await answerCallbackQuery(botToken, query.id, 'Broadcast failed.');
-            await env.KV.delete(broadcastId);
-            return;
-        }
-
-        if (!broadcast?.message_id || !broadcast?.from_chat_id) {
-            await sendMessage(botToken, adminId, 'Invalid broadcast data\\.');
-            await answerCallbackQuery(botToken, query.id, 'Broadcast failed.');
-            await env.KV.delete(broadcastId);
-            return;
-        }
-
-        // Efficient unified selection of active users for this bot
-        const { results: activeUsers } = await env.D1.prepare(`
-            SELECT u.user_id, u.username, u.first_name 
-            FROM users u 
-            LEFT JOIN blocked_users b ON u.user_id = b.user_id AND b.bot_id = ?
-            WHERE b.user_id IS NULL AND u.bot_id = ?
-        `).bind(ctx.bot_id, ctx.bot_id).all();
-
-        let successCount = 0;
-        let failCount = 0;
-        const errors = [];
-
-        const batchSize = 8;
-        for (let i = 0; i < activeUsers.length; i += batchSize) {
-            const batch = activeUsers.slice(i, i + batchSize);
-            await Promise.all(batch.map(async (user) => {
-                let attempts = 0;
-                const maxAttempts = 3;
-                while (attempts < maxAttempts) {
-                    try {
-                        const response = await copyMessage(botToken, user.user_id, broadcast.from_chat_id, broadcast.message_id);
-                        const result = await response.json();
-                        if (!result.ok) throw new Error(result.description);
-                        successCount++;
-                        break;
-                    } catch (err) {
-                        attempts++;
-                        if (attempts === maxAttempts) {
-                            failCount++;
-                            errors.push(`User ${formatUsername(user.username) || user.first_name} (${user.user_id}): ${err.message}`);
-                        }
-                        await new Promise(r => setTimeout(r, 500));
-                    }
-                }
-            }));
-            await new Promise(r => setTimeout(r, 200)); // Batch throttle
-        }
-
-        await env.KV.delete(broadcastId);
-        let report = `Broadcast sent to ${successCount} users, failed for ${failCount} users.`;
-        if (failCount > 0) {
-            report += `\nErrors:\n${errors.join('\n')}`;
-        }
-        await sendMessage(botToken, adminId, escapeMarkdown(report));
-        await answerCallbackQuery(botToken, query.id, 'Broadcast completed.');
-        await deleteMessage(botToken, chatId, messageId);
-        console.log(`KV DELETE ${broadcastId}, Broadcast sent (${Date.now() - startTime}ms)`);
-    } else if (data.startsWith('cancel_broadcast:')) {
-        const broadcastId = data.replace('cancel_broadcast:', '');
-        await env.KV.delete(broadcastId);
-        await sendMessage(botToken, adminId, 'Broadcast cancelled\\.');
-        await answerCallbackQuery(botToken, query.id, 'Broadcast cancelled.');
-        await deleteMessage(botToken, chatId, messageId);
-        console.log(`KV DELETE ${broadcastId}, Broadcast cancelled (${Date.now() - startTime}ms)`);
-    }
+    } catch (err) { await logError(env, ctx, err, "handleCallbackQuery"); }
 }
 
 async function handleChannelPost(post, env, ctx) {
-    const startTime = Date.now();
-    const botToken = ctx.bot_token;
-    const adminId = ctx.admin_id;
-    const channelId = await env.KV.get(`bot:${ctx.bot_id}:config:channel_id`);
+    const { bot_token, bot_id, admin_id } = ctx;
+    const channelId = await env.KV.get(`bot:${bot_id}:config:channel_id`);
+    if (!channelId || post.chat.id.toString() !== channelId) return;
 
-    if (!channelId || post.chat.id.toString() !== channelId) {
-        return;
+    let success = 0, fail = 0;
+    let offset = 0;
+    const limit = 500;
+
+    while (true) {
+        const users = (await env.D1.prepare(`
+            SELECT u.user_id 
+            FROM users u 
+            LEFT JOIN blocked_users b ON u.user_id = b.user_id AND b.bot_id = ? 
+            WHERE b.user_id IS NULL AND u.bot_id = ?
+            LIMIT ? OFFSET ?
+        `).bind(bot_id, bot_id, limit, offset).all()).results;
+
+        if (!users.length) break;
+
+        for (const u of users) {
+            try {
+                const res = await (await forwardMessage(bot_token, u.user_id, post.chat.id, post.message_id)).json();
+                if (res.ok) {
+                    success++;
+                } else {
+                    fail++;
+                    if (res.description !== "Forbidden: bot was blocked by the user") {
+                        await logError(env, { ...ctx, user_id: u.user_id }, new Error(res.description), "ChannelPostForward");
+                    }
+                }
+            } catch (err) {
+                fail++;
+                await logError(env, { ...ctx, user_id: u.user_id }, err, "ChannelPostTarget");
+            }
+            if ((success + fail) % 30 === 0) await new Promise(r => setTimeout(r, 1000));
+        }
+
+        if (users.length < limit) break;
+        offset += limit;
+        await new Promise(r => setTimeout(r, 500));
     }
 
-    // Auto-forward from linked channel with bot isolation
-    const { results } = await env.D1.prepare(`
-        SELECT u.user_id 
-        FROM users u 
-        LEFT JOIN blocked_users b ON u.user_id = b.user_id AND b.bot_id = ?
-        WHERE b.user_id IS NULL AND u.bot_id = ?
-    `).bind(ctx.bot_id, ctx.bot_id).all();
+    if (admin_id) await sendMessage(bot_token, admin_id, MESSAGES.FORWARD_REPORT(success, fail), { parse_mode: 'MarkdownV2', auto_escape: false });
+}
 
-    let successCount = 0;
-    let failCount = 0;
+// Higher-level Broadcast Helpers
+async function runBroadcast(env, botId, token, bdata, ctx) {
+    let success = 0, fail = 0;
+    let offset = 0;
+    const limit = 500;
 
-    for (const user of results) {
+    while (true) {
+        // SECURITY: Paginated fetch to prevent memory exhaustion and Worker timeouts.
+        const users = (await env.D1.prepare(`
+            SELECT u.user_id 
+            FROM users u 
+            LEFT JOIN blocked_users bl ON u.user_id = bl.user_id AND bl.bot_id = ? 
+            WHERE bl.user_id IS NULL AND u.bot_id = ? 
+            LIMIT ? OFFSET ?
+        `).bind(botId, botId, limit, offset).all()).results;
+
+        if (!users.length) break;
+
+        for (const u of users) {
+            try {
+                const res = await copyMessage(token, u.user_id, bdata.from_chat_id, bdata.message_id);
+                const resData = await res.json();
+                if (resData.ok) {
+                    success++;
+                } else {
+                    fail++;
+                    // Log structured error for each failed delivery (except blocked by user)
+                    if (resData.description !== "Forbidden: bot was blocked by the user") {
+                        await logError(env, { ...ctx, user_id: u.user_id }, new Error(resData.description), "BroadcastDelivery");
+                    }
+                }
+            } catch (err) {
+                fail++;
+                await logError(env, { ...ctx, user_id: u.user_id }, err, "BroadcastTarget");
+            }
+
+            // SECURITY: Rate limit conscious delay (30 msgs/sec limit for bots)
+            if ((success + fail) % 30 === 0) await new Promise(r => setTimeout(r, 1000));
+        }
+
+        if (users.length < limit) break;
+        offset += limit;
+
+        // Safety delay between large batches
+        await new Promise(r => setTimeout(r, 500));
+    }
+    return { success, fail };
+}
+
+async function runGlobalBroadcast(env, bdata, ctx) {
+    const bots = [{ id: 0, token: env.BOT_TOKEN }];
+    const clones = (await env.D1.prepare('SELECT id, token FROM clones WHERE status = ?').bind('active').all()).results;
+    bots.push(...clones);
+
+    const botIds = bots.map(b => b.id);
+    const placeholders = botIds.map(() => '?').join(',');
+
+    let success = 0, fail = 0;
+    let offset = 0;
+    const limit = 500;
+
+    while (true) {
+        // SECURITY: Paginated fetch to prevent worker memory/timeout issues.
+        const { results: allUsers } = await env.D1.prepare(`
+            SELECT u.user_id, u.bot_id 
+            FROM users u 
+            LEFT JOIN blocked_users bl ON u.user_id = bl.user_id AND bl.bot_id = u.bot_id 
+            WHERE bl.user_id IS NULL AND u.bot_id IN (${placeholders})
+            LIMIT ? OFFSET ?
+        `).bind(...botIds, limit, offset).all();
+
+        if (!allUsers.length) break;
+
+        const userGroups = allUsers.reduce((acc, user) => {
+            acc[user.bot_id] = acc[user.bot_id] || [];
+            acc[user.bot_id].push(user.user_id);
+            return acc;
+        }, {});
+
+        for (const b of bots) {
+            const users = userGroups[b.id] || [];
+            if (!users.length) continue;
+
+            for (const userId of users) {
+                try {
+                    const res = await copyMessage(b.token, userId, bdata.from_chat_id, bdata.message_id);
+                    const resData = await res.json();
+                    if (resData.ok) {
+                        success++;
+                    } else {
+                        fail++;
+                        if (resData.description !== "Forbidden: bot was blocked by the user") {
+                            await logError(env, { ...ctx, user_id: userId, bot_id: b.id }, new Error(resData.description), "GlobalBroadcastDelivery");
+                        }
+                    }
+                } catch (err) {
+                    fail++;
+                    await logError(env, { ...ctx, user_id: userId, bot_id: b.id }, err, "GlobalBroadcastTarget");
+                }
+                if ((success + fail) % 30 === 0) await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+
+        if (allUsers.length < limit) break;
+        offset += limit;
+        await new Promise(r => setTimeout(r, 500));
+    }
+    return { success, fail };
+}
+
+async function runCloneBroadcast(env, bdata) {
+    const owners = (await env.D1.prepare('SELECT DISTINCT owner_id FROM clones WHERE status = ?').bind('active').all()).results;
+    let success = 0, fail = 0;
+    for (const o of owners) {
         try {
-            await forwardMessage(botToken, user.user_id, post.chat.id, post.message_id);
-            successCount++;
-        } catch (err) {
-            failCount++;
-        }
-        await new Promise(r => setTimeout(r, 50));
+            const res = await copyMessage(env.BOT_TOKEN, o.owner_id, bdata.from_chat_id, bdata.message_id);
+            if ((await res.json()).ok) success++; else fail++;
+        } catch { fail++; }
     }
-
-    // Feedback to admin
-    if (adminId) {
-        const report = `📢 *Auto\\-Forward Report*\\n✅ Sent to ${successCount} users\\n❌ Failed for ${failCount} users`;
-        await sendMessage(botToken, adminId, report, { parse_mode: 'MarkdownV2' });
-    }
+    return { success, fail };
 }
 
-async function sendUserList(botToken, chatId, db, botId) {
-    const startTime = Date.now();
-    try {
-        const { results } = await db.prepare('SELECT user_id, username, first_name FROM users WHERE bot_id = ? LIMIT 50').bind(botId).all();
-        if (!results.length) {
-            await sendMessage(botToken, chatId, 'No users yet\\.');
-            return;
-        }
+// Telegram API Helpers
+async function sendMessage(token, chatId, text, options = {}) {
+    const shouldEscape = options.auto_escape ?? true;
+    const finalChatId = (chatId && typeof chatId === 'object' && chatId.id) ? chatId.id : chatId;
 
-        let list = '👥 *Contacted Users:*\n\n';
-        for (let i = 0; i < results.length; i++) {
-            const user = results[i];
-            const name = escapeMarkdown(user.first_name || 'User');
-            const profileLink = `[${name}](tg://user?id=${user.user_id})`;
-            const usernameLink = user.username ? ` (@${escapeMarkdown(user.username)})` : '';
-            const entry = `• ${profileLink}${usernameLink}\\n`;
+    // Determine if we should parse as MarkdownV2
+    const parseMode = options.parse_mode !== undefined ? options.parse_mode : 'MarkdownV2';
 
-            // Check for 4096 character limit
-            if ((list.length + entry.length + 50) > 4096) {
-                list += `\n... and others (Showing ${i} of ${results.length})`;
-                break;
-            }
-            list += entry;
-        }
-
-        await sendMessage(botToken, chatId, list, { parse_mode: 'MarkdownV2' });
-        console.log(`D1 SELECT users, Userlist took ${Date.now() - startTime}ms`);
-    } catch (err) {
-        console.error(`Userlist Error: ${err.message}`);
-        await sendErrorToAdmin(env, ctx, `Failed to fetch user list: ${err.message}`);
+    let finalText = text;
+    if (shouldEscape && parseMode === 'MarkdownV2') {
+        finalText = escapeMarkdown(text);
     }
-}
 
-async function debugMessages(botToken, chatId, db, botId) {
-    const startTime = Date.now();
-    try {
-        const { results } = await db.prepare('SELECT m.admin_msg_id, m.user_id, m.user_msg_id, m.created_at, u.username, u.first_name FROM messages m LEFT JOIN users u ON m.user_id = u.user_id AND u.bot_id = ? WHERE m.bot_id = ? ORDER BY m.created_at DESC LIMIT 20').bind(botId, botId).all();
-        if (!results.length) {
-            await sendMessage(botToken, chatId, 'No messages in database\\.');
-            return;
-        }
+    const body = {
+        chat_id: finalChatId,
+        text: finalText,
+        ...options
+    };
+    if (parseMode) body.parse_mode = parseMode;
+    else delete body.parse_mode;
 
-        let list = '📜 *Recent Messages \\(DB\\):*\n\n';
-        for (let i = 0; i < results.length; i++) {
-            const msgRec = results[i];
-            const name = formatUsername(msgRec.username) || escapeMarkdown(msgRec.first_name || 'Unknown');
-            const entry = `• \\\`${msgRec.admin_msg_id}\\\` from ${name} \\(\\\`${msgRec.user_id}\\\`\\)\\n  msg\\_id: \\\`${msgRec.user_msg_id}\\\` @ ${new Date(msgRec.created_at * 1000).toISOString().split('T')[0]}\\n\\n`;
-
-            if ((list.length + entry.length + 50) > 4096) {
-                list += `\n... additional messages truncated.`;
-                break;
-            }
-            list += entry;
-        }
-
-        await sendMessage(botToken, chatId, list, { parse_mode: 'MarkdownV2' });
-        console.log(`D1 SELECT messages, Debug messages took ${Date.now() - startTime}ms`);
-    } catch (err) {
-        console.error(`Debug Messages Error: ${err.message}`);
-        await sendErrorToAdmin(env, ctx, `Failed to fetch messages: ${err.message}`);
-    }
-}
-
-function buildKeyboard(buttonConfig) {
-    if (!buttonConfig || !buttonConfig.length) return undefined;
-
-    const grid = [];
-    for (let i = 0; i < buttonConfig.length; i += 2) {
-        grid.push(buttonConfig.slice(i, i + 2));
-    }
-    return { inline_keyboard: grid };
-}
-
-async function copyMessage(token, to, fromChat, msgId, options = {}) {
-    const response = await fetch(`https://api.telegram.org/bot${token}/copyMessage`, {
+    let res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            chat_id: to,
-            from_chat_id: fromChat,
-            message_id: msgId,
-            ...options
-        })
+        body: JSON.stringify(body)
     });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
+
+    const data = await res.clone().json();
+    if (!data.ok && data.description.includes("can't parse entities")) {
+        // Fallback: strip all escaping and send as plain text
+        console.warn(`MarkdownV2 parsing failed, falling back to plain text for: ${text.substring(0, 50)}...`);
+        delete body.parse_mode;
+        body.text = text.replace(/\\([_*[\]()~`>#+\-=|{}.!])/g, '$1');
+        res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
     }
-    return response;
+    return res;
 }
 
 async function sendMedia(token, chatId, msg, options = {}) {
@@ -1378,177 +537,46 @@ async function sendMedia(token, chatId, msg, options = {}) {
     return response;
 }
 
-function escapeMarkdown(text) {
-    if (text === null || text === undefined) return '';
-    const str = typeof text === 'string' ? text : String(text);
-    return str.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
-}
-
-async function sendMessage(token, chatId, text, options = {}) {
-    let response;
-    try {
-        response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'MarkdownV2', ...options })
-        });
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
-        }
-    } catch (err) {
-        if (err.message.includes("can't parse entities")) {
-            console.warn(`MarkdownV2 parsing failed for text, falling back to plain text. Error: ${err.message}`);
-            // Clean text for plain fallback: strip backslashes used for V2 escaping
-            const cleanText = text.replace(/\\([_*[\]()~`>#+\-=|{}.!])/g, '$1');
-            response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, text: cleanText, ...options, parse_mode: undefined })
-            });
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(`Telegram API error (plain text fallback): ${errorData.description || response.statusText}`);
-            }
-        } else {
-            throw err;
-        }
-    }
-    return response;
-}
-
-async function sendSticker(token, chatId, sticker, options = {}) {
-    const response = await fetch(`https://api.telegram.org/bot${token}/sendSticker`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, sticker, ...options })
-    });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
-    }
-    return response;
-}
-
-async function forwardMessage(token, to, from, msgId) {
-    const response = await fetch(`https://api.telegram.org/bot${token}/forwardMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            chat_id: to,
-            from_chat_id: from,
-            message_id: msgId
-        })
-    });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
-    }
-    return response;
-}
-
-async function deleteMessage(token, chatId, messageId) {
-    const response = await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, message_id: messageId })
-    });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
-    }
-}
-
-async function answerCallbackQuery(token, queryId, text) {
-    const response = await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ callback_query_id: queryId, text })
-    });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
-    }
-}
-
-async function getChat(token, chatId) {
-    const response = await fetch(`https://api.telegram.org/bot${token}/getChat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId })
-    });
-    if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
-    }
-    const data = await response.json();
-    return data.result;
-}
-
-async function sendErrorToAdmin(env, ctx, error) {
-    // Technical errors are strictly for the Super Admin
-    // We use the Main Bot Token to ensure delivery even if a clone's token is invalid
+async function handleCloneAction(prefetchedClone, id, secretRef, action, env, ctx) {
     const mainToken = env.BOT_TOKEN;
-    const superAdminId = ctx.super_admin_id;
-    if (!superAdminId || !mainToken) return;
-
-    await sendMessage(mainToken, superAdminId, `⚠️ *System Error*\n\n\`${escapeMarkdown(error)}\``, { parse_mode: 'MarkdownV2' });
-}
-
-async function handleCloneAction(cloneId, secretRef, action, env, ctx) {
     try {
-        let clone;
-        if (secretRef) {
-            clone = await env.D1.prepare('SELECT * FROM clones WHERE secret_ref = ?').bind(secretRef).first();
-        } else if (cloneId) {
-            clone = await env.D1.prepare('SELECT * FROM clones WHERE id = ?').bind(cloneId).first();
-        }
-
+        let clone = prefetchedClone;
         if (!clone) {
-            await sendMessage(ctx.bot_token, ctx.super_admin_id, '❌ Clone request/bot not found\\.');
-            return;
+            if (id) clone = await env.D1.prepare('SELECT * FROM clones WHERE id = ?').bind(id).first();
+            else clone = await env.D1.prepare('SELECT * FROM clones WHERE secret_ref = ?').bind(secretRef).first();
         }
+        if (!clone) return;
 
         if (action === 'approve') {
-            await env.D1.prepare('UPDATE clones SET status = ? WHERE id = ?').bind('active', clone.id).run();
+            const webhookUrl = `${new URL(ctx.request_url).origin}/handle/${clone.secret_ref}`;
 
-            // Set commands for the new bot
-            await setMyCommands(clone.token);
-
-            // Auto-discover Worker domain from main bot's webhook
-            const mainWebhookRes = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getWebhookInfo`);
-            const mainWebhook = await mainWebhookRes.json();
-            const baseUrl = mainWebhook.ok && mainWebhook.result.url ? new URL(mainWebhook.result.url).origin : '';
-
-            if (baseUrl) {
-                const targetWebhook = `${baseUrl}/handle/${clone.secret_ref}`;
-                const webhookRes = await setWebhook(clone.token, targetWebhook);
-
-                if (webhookRes.ok) {
-                    await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `✅ Bot @${escapeMarkdown(clone.bot_username)} approved and live\\!`);
-                    await sendMessage(clone.token, clone.owner_id, "🎊 Congrats\\! Your bot has been approved and is now active\\. You can use /cmd to see available admin commands\\.");
-                } else {
-                    await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `✅ Bot @${escapeMarkdown(clone.bot_username)} approved, but Telegram rejected the webhook: ${escapeMarkdown(webhookRes.description)}\\. Please check the token\\.`, { parse_mode: 'MarkdownV2' });
-                }
+            // SECURITY: Transactional-style safety. Webhook execution MUST succeed before activation.
+            const whRes = await setWebhook(clone.token, webhookUrl);
+            if (whRes.ok) {
+                await setMyCommands(clone.token);
+                await env.D1.prepare('UPDATE clones SET status = ? WHERE id = ?').bind('active', clone.id).run();
+                await sendMessage(mainToken, clone.owner_id, `✅ Your bot @${escapeMarkdown(clone.bot_username)} has been approved and activated!`);
+                await sendMessage(mainToken, ctx.super_admin_id, `✅ Activated @${escapeMarkdown(clone.bot_username)}`);
             } else {
-                await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `✅ Bot @${escapeMarkdown(clone.bot_username)} approved, but failed to auto\\-discover base URL\\. Please set webhook manually to: \\\`${escapeMarkdown(clone.secret_ref)}\\\``, { parse_mode: 'MarkdownV2' });
+                const whError = whRes.description || "Webhook setup failed";
+                await sendMessage(mainToken, ctx.super_admin_id, `❌ Failed to activate @${escapeMarkdown(clone.bot_username)}: ${escapeMarkdown(whError)}\n(Clone status remains pending)`);
+                throw new Error(`Activation failed for @${clone.bot_username}: ${whError}`);
             }
         } else if (action === 'reject') {
             await env.D1.prepare('DELETE FROM clones WHERE id = ?').bind(clone.id).run();
-            await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `❌ Clone request for @${escapeMarkdown(clone.bot_username)} rejected\\.`);
-            try {
-                await sendMessage(clone.token, clone.owner_id, `Sorry, your request to clone the bot \\(@${escapeMarkdown(clone.bot_username)}\\) has been rejected by the Super Admin\\.`);
-            } catch (e) { }
+            await sendMessage(mainToken, clone.owner_id, `❌ Your bot @${escapeMarkdown(clone.bot_username)} was rejected. Please check your token and try again.`);
+            await sendMessage(mainToken, ctx.super_admin_id, `❌ Rejected @${escapeMarkdown(clone.bot_username)}`);
         } else if (action === 'delete') {
             await env.D1.prepare('DELETE FROM clones WHERE id = ?').bind(clone.id).run();
-            try { await fetch(`https://api.telegram.org/bot${clone.token}/deleteWebhook`); } catch (e) { }
-            await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `🗑️ Bot clone @${escapeMarkdown(clone.bot_username)} deleted\\.`);
             try {
-                await sendMessage(clone.token, clone.owner_id, `Your bot clone \\(@${escapeMarkdown(clone.bot_username)}\\) has been deleted by the Super Admin\\.`);
-            } catch (e) { }
+                await fetch(`https://api.telegram.org/bot${clone.token}/deleteWebhook`);
+            } catch (e) {
+                log(ctx, "Webhook deletion cleanup failed", { error: e.message });
+            }
+            await sendMessage(mainToken, ctx.super_admin_id, `🗑️ Deleted @${escapeMarkdown(clone.bot_username)}`);
         }
     } catch (err) {
-        await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `❌ Error in handleCloneAction: ${escapeMarkdown(err.message)}`);
+        await logError(env, ctx, err, "handleCloneAction");
     }
 }
 
@@ -1568,5 +596,418 @@ async function setMyCommands(token) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ commands })
     });
+    return await res.json();
+}
+
+function buildKeyboard(buttonConfig) {
+    if (!buttonConfig || !buttonConfig.length) return undefined;
+    const grid = [];
+    for (let i = 0; i < buttonConfig.length; i += 2) grid.push(buttonConfig.slice(i, i + 2));
+    return { inline_keyboard: grid };
+}
+
+async function copyMessage(token, to, fromChat, msgId, options = {}) {
+    return await fetch(`https://api.telegram.org/bot${token}/copyMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: to, from_chat_id: fromChat, message_id: msgId, ...options })
+    });
+}
+
+
+// --- Modular Handlers ---
+
+async function handleAdminCommands(msg, env, ctx, { command, fullCommand }) {
+    const { bot_token, admin_id, bot_id, user_id, is_super_bot, super_admin_id } = ctx;
+    const chatId = msg.chat.id;
+    const isAdmin = user_id.toString() === admin_id || user_id.toString() === super_admin_id;
+    if (!isAdmin) return false;
+
+    const setupKey = `bot:${bot_id}:setup:${admin_id}`;
+    const broadcastKey = `bot:${bot_id}:broadcast:${admin_id}`;
+
+    try {
+        if (command === '/start' || command === '/help') {
+            const helpLines = [
+                `👋 *Telegram Bot Manager*`,
+                ``,
+                `• /start - Initialize bot`,
+                `• /help - Show this menu`,
+                `• /clone - Request a bot clone`,
+                `• /cancel - Stop current action`
+            ];
+
+            if (isAdmin) {
+                helpLines.push(
+                    ``, `🛡️ *Admin Only*`,
+                    `• /broadcast - Send message to all users`,
+                    `• /setwelcome - Customize welcome greeting`,
+                    `• /setbuttons - Customize start buttons`,
+                    `• /setchannel - Link channel for auto-forwarding`,
+                    `• /delchannel - Remove linked channel`,
+                    `• /delwelcome - Reset welcome message`,
+                    `• /delbuttons - Remove specific buttons`,
+                    `• /userlist - List bot users`,
+                    `• /block - (reply) Block a user`,
+                    `• /unblock - Unblock a user`
+                );
+            }
+
+            if (is_super_bot) {
+                helpLines.push(
+                    ``, `👑 *Super Admin Only*`,
+                    `• /gbroadcast - Global broadcast to ALL clones`,
+                    `• /cbroadcast - Message all clone owners`,
+                    `• /status - Server diagnostics`,
+                    `• /req - View pending clone requests`,
+                    `• /clones - Manage active clones`
+                );
+            }
+
+            // We use auto_escape: false here because we WANT the * and • to be processed by MarkdownV2
+            await sendMessage(bot_token, chatId, helpLines.join('\n'), { parse_mode: 'MarkdownV2', auto_escape: false });
+            return true;
+        }
+
+        if (command === '/cancel') {
+            await env.KV.delete(setupKey);
+            await env.KV.delete(broadcastKey);
+            await sendMessage(bot_token, chatId, MESSAGES.CANCELLED_ALL);
+            return true;
+        }
+
+        if (command === '/status' && is_super_bot) {
+            const status = `ℹ️ *Bot Status*\n\n• Bot ID: \`${bot_id}\`\n• Admin: \`${admin_id}\`\n• Super Admin: \`${super_admin_id}\``;
+            await setMyCommands(bot_token);
+            await sendMessage(bot_token, chatId, status, { parse_mode: 'MarkdownV2', auto_escape: false });
+            return true;
+        }
+
+        if (command === '/clone') {
+            await env.KV.put(setupKey, JSON.stringify({ type: 'clone_collect' }), { expirationTtl: 600 });
+            await sendMessage(bot_token, chatId, "Please send your Bot Token from @BotFather.");
+            return true;
+        }
+
+        if (command === '/userlist') {
+            const users = (await env.D1.prepare('SELECT user_id, username, first_name FROM users WHERE bot_id = ? LIMIT 50').bind(bot_id).all()).results;
+            if (!users.length) return await sendMessage(bot_token, chatId, 'No users yet.');
+            let list = '👥 *Users:*\n\n' + users.map(u => `• [${escapeMarkdown(u.first_name || 'User')}](tg://user?id=${u.user_id})${u.username ? ` (@${escapeMarkdown(u.username)})` : ''}`).join('\n');
+            await sendMessage(bot_token, chatId, list, { parse_mode: 'MarkdownV2', auto_escape: false });
+            return true;
+        }
+
+        if (command === '/broadcast') {
+            await env.KV.put(broadcastKey, JSON.stringify({ type: 'pending' }), { expirationTtl: 300 });
+            await sendMessage(bot_token, chatId, MESSAGES.BROADCAST_PROMPT, { parse_mode: 'MarkdownV2' });
+            return true;
+        }
+
+        if (command === '/setwelcome') {
+            await env.KV.put(setupKey, JSON.stringify({ type: 'welcome_count' }), { expirationTtl: 600 });
+            await sendMessage(bot_token, chatId, MESSAGES.WELCOME_PROMPT);
+            return true;
+        }
+
+        if (command === '/setbuttons') {
+            await env.KV.put(setupKey, JSON.stringify({ type: 'buttons' }), { expirationTtl: 600 });
+            await sendMessage(bot_token, chatId, MESSAGES.BUTTONS_PROMPT, { parse_mode: 'MarkdownV2' });
+            return true;
+        }
+
+        if (command === '/setchannel') {
+            await env.KV.put(setupKey, JSON.stringify({ type: 'channel' }), { expirationTtl: 600 });
+            await sendMessage(bot_token, chatId, MESSAGES.CHANNEL_PROMPT);
+            return true;
+        }
+
+        if (command === '/delwelcome') {
+            await env.KV.delete(`bot:${bot_id}:config:welcome`);
+            await sendMessage(bot_token, chatId, "Welcome message reset.");
+            return true;
+        }
+
+        if (command === '/delchannel') {
+            await env.KV.delete(`bot:${bot_id}:config:channel_id`);
+            await sendMessage(bot_token, chatId, MESSAGES.CHANNEL_REMOVED);
+            return true;
+        }
+
+        if (command === '/delbuttons') {
+            const btns = JSON.parse(await env.KV.get(`bot:${bot_id}:config:buttons`) || '[]');
+            if (!btns.length) return await sendMessage(bot_token, chatId, MESSAGES.NO_BUTTONS);
+            const kb = btns.map((b, i) => [{ text: `🗑️ ${b.text}`, callback_data: `delete_btn:${i}` }]);
+            await sendMessage(bot_token, chatId, MESSAGES.BUTTON_DELETE_SELECT, { reply_markup: { inline_keyboard: kb } });
+            return true;
+        }
+
+        if (is_super_bot && command === '/req') {
+            const reqs = (await env.D1.prepare('SELECT * FROM clones WHERE status = ?').bind('pending').all()).results;
+            if (!reqs.length) return await sendMessage(bot_token, chatId, "No pending requests.");
+            let list = "⏳ *Pending Requests:*\n\n" + reqs.map((r, i) => `${i + 1}. @${escapeMarkdown(r.bot_username)} (Owner: \`${r.owner_id}\`)\n   /approve_${i + 1} | /reject_${i + 1}`).join('\n\n');
+            await sendMessage(bot_token, chatId, list, { parse_mode: 'MarkdownV2', auto_escape: false });
+            return true;
+        }
+
+        if (is_super_bot && command === '/clones') {
+            const clones = (await env.D1.prepare('SELECT * FROM clones WHERE status = ?').bind('active').all()).results;
+            if (!clones.length) return await sendMessage(bot_token, chatId, "No active clones.");
+            let list = "🚀 *Active Clones:*\n\n" + clones.map((c, i) => `${i + 1}. @${escapeMarkdown(c.bot_username)} (Owner: \`${c.owner_id}\`)\n   /delclone_${i + 1}`).join('\n\n');
+            await sendMessage(bot_token, chatId, list, { parse_mode: 'MarkdownV2', auto_escape: false });
+            return true;
+        }
+
+        if (is_super_bot && command === '/cbroadcast') {
+            await env.KV.put(broadcastKey, JSON.stringify({ type: 'pending_owner' }), { expirationTtl: 300 });
+            await sendMessage(bot_token, chatId, MESSAGES.OWNER_BROADCAST_START, { parse_mode: 'MarkdownV2' });
+            return true;
+        }
+
+        if (is_super_bot && command === '/gbroadcast') {
+            await env.KV.put(setupKey, JSON.stringify({ type: 'gbroadcast_collect', id: `gb:${Date.now()}` }), { expirationTtl: 600 });
+            await sendMessage(bot_token, chatId, MESSAGES.GLOBAL_BROADCAST_START, { parse_mode: 'MarkdownV2' });
+            return true;
+        }
+
+        // Sub-commands
+        if (is_super_bot && (command.startsWith('/approve_') || command.startsWith('/reject_'))) {
+            const idx = parseInt(command.split('_')[1], 10) - 1;
+            const action = command.startsWith('/approve') ? 'approve' : 'reject';
+            const reqs = (await env.D1.prepare('SELECT * FROM clones WHERE status = ? ORDER BY id ASC').bind('pending').all()).results;
+            if (reqs[idx]) await handleCloneAction(reqs[idx], null, null, action, env, ctx);
+            else await sendMessage(bot_token, chatId, MESSAGES.REQ_INVALID);
+            return true;
+        }
+
+        if (is_super_bot && command.startsWith('/delclone_')) {
+            const idx = parseInt(command.split('_')[1], 10) - 1;
+            const clones = (await env.D1.prepare('SELECT * FROM clones WHERE status = ? ORDER BY id ASC').bind('active').all()).results;
+            if (clones[idx]) await handleCloneAction(clones[idx], null, null, 'delete', env, ctx);
+            else await sendMessage(bot_token, chatId, MESSAGES.CLONE_DEL_INVALID);
+            return true;
+        }
+
+    } catch (err) { await logError(env, ctx, err, "handleAdminCommands"); }
+    return false;
+}
+
+async function handleSetupState(msg, env, ctx, state) {
+    const { bot_token, admin_id, bot_id, user_id } = ctx;
+    const chatId = msg.chat.id;
+    const text = msg.text || '';
+    const key = `bot:${bot_id}:setup:${admin_id}`;
+
+    try {
+        if (state.type === 'welcome_count') {
+            const n = parseInt(text, 10);
+            if (n === 1 || n === 2) {
+                state.type = 'welcome_collect'; state.targetCount = n; state.messages = [];
+                await env.KV.put(key, JSON.stringify(state), { expirationTtl: 600 });
+                await sendMessage(bot_token, chatId, MESSAGES.STEP_1_WELCOME);
+            } else await sendMessage(bot_token, chatId, 'Please send 1 or 2.');
+            return true;
+        }
+
+        if (state.type === 'welcome_collect') {
+            let msgData;
+            if (msg.text) msgData = { type: 'text', content: msg.text };
+            else if (msg.sticker) msgData = { type: 'sticker', file_id: msg.sticker.file_id };
+            else if (msg.photo) msgData = { type: 'photo', file_id: msg.photo[msg.photo.length - 1].file_id, caption: msg.caption };
+            else if (msg.animation) msgData = { type: 'animation', file_id: msg.animation.file_id, caption: msg.caption };
+            else if (msg.video) msgData = { type: 'video', file_id: msg.video.file_id, caption: msg.caption };
+            else if (msg.document) msgData = { type: 'document', file_id: msg.document.file_id, caption: msg.caption };
+
+            if (!msgData) return await sendMessage(bot_token, chatId, MESSAGES.WELCOME_UNSUPPORTED);
+
+            state.messages.push(msgData);
+            if (state.messages.length < state.targetCount) {
+                await env.KV.put(key, JSON.stringify(state), { expirationTtl: 600 });
+                await sendMessage(bot_token, chatId, MESSAGES.STEP_2_WELCOME);
+            } else {
+                await env.KV.put(key, JSON.stringify(state), { expirationTtl: 600 });
+                await sendMessage(bot_token, chatId, 'Previewing...');
+                for (const m of state.messages) {
+                    if (m.type === 'text') await sendMessage(bot_token, chatId, m.content);
+                    else await sendMedia(bot_token, chatId, { [m.type]: m.file_id, caption: m.caption });
+                }
+                await sendMessage(bot_token, chatId, MESSAGES.WELCOME_SAVE_CONFIRM, { reply_markup: { inline_keyboard: [[{ text: '✅ Save', callback_data: 'save_welcome' }, { text: '❌ Cancel', callback_data: 'cancel_welcome' }]] } });
+            }
+            return true;
+        }
+
+        if (state.type === 'buttons') {
+            const btns = [];
+            text.split('\n').filter(l => l.trim()).forEach(l => {
+                const [label, url] = l.split('|').map(s => s.trim());
+                if (label && url) btns.push({ text: label, url: url.startsWith('@') ? `https://t.me/${url.substring(1)}` : url });
+            });
+            if (btns.length) {
+                await env.KV.put(`bot:${bot_id}:config:buttons`, JSON.stringify(btns));
+                await env.KV.delete(key);
+                await sendMessage(bot_token, chatId, MESSAGES.BUTTONS_UPDATED(btns.length));
+            } else await sendMessage(bot_token, chatId, MESSAGES.BUTTONS_INVALID);
+            return true;
+        }
+
+        if (state.type === 'channel') {
+            const cid = msg.forward_from_chat?.id?.toString() || (text.startsWith('-100') ? text.trim() : null);
+            if (cid) {
+                await env.KV.put(`bot:${bot_id}:config:channel_id`, cid);
+                await env.KV.delete(key);
+                await sendMessage(bot_token, chatId, MESSAGES.CHANNEL_LINKED(cid), { parse_mode: 'MarkdownV2', auto_escape: false });
+            } else await sendMessage(bot_token, chatId, MESSAGES.CHANNEL_INVALID);
+            return true;
+        }
+
+        if (state.type === 'clone_collect' && /^\d+:[\w-]+$/.test(text.trim())) {
+            const token = text.trim();
+
+            // SECURITY: Pre-flight uniqueness checks (Token and Username)
+            const exists = await env.D1.prepare('SELECT bot_username FROM clones WHERE token = ?').bind(token).first();
+            if (exists) {
+                await env.KV.delete(key);
+                return await sendMessage(bot_token, chatId, `❌ This bot @${escapeMarkdown(exists.bot_username)} is already registered in our system.`);
+            }
+
+            const meRes = await (await fetch(`https://api.telegram.org/bot${token}/getMe`)).json();
+            if (!meRes.ok) throw new Error(meRes.description || "Invalid bot token");
+
+            const userExists = await env.D1.prepare('SELECT id FROM clones WHERE bot_username = ?').bind(meRes.result.username).first();
+            if (userExists) {
+                await env.KV.delete(key);
+                return await sendMessage(bot_token, chatId, `❌ The username @${escapeMarkdown(meRes.result.username)} is already taken as a clone. If this is your bot, please contact support.`);
+            }
+
+            const ref = Math.random().toString(36).substring(7);
+            await env.D1.prepare('INSERT INTO clones (token, owner_id, bot_username, secret_ref, status, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(token, user_id, meRes.result.username, ref, 'pending', Math.floor(Date.now() / 1000)).run();
+            await env.KV.delete(key);
+            await sendMessage(bot_token, chatId, MESSAGES.CLONE_REQUEST_SENT(meRes.result.username), { parse_mode: 'MarkdownV2' });
+            await sendMessage(env.BOT_TOKEN, ctx.super_admin_id, `🆕 *New Clone Request*\n\nBot: @${escapeMarkdown(meRes.result.username)}\nOwner: \`${user_id}\``, { parse_mode: 'MarkdownV2', auto_escape: false, reply_markup: { inline_keyboard: [[{ text: '✅ Approve', callback_data: `approve_clone:${ref}` }, { text: '❌ Reject', callback_data: `reject_clone:${ref}` }]] } });
+            return true;
+        }
+
+        if (state.type === 'gbroadcast_collect') {
+            await env.KV.put(state.id, JSON.stringify({ from_chat_id: chatId, message_id: msg.message_id }), { expirationTtl: 3600 });
+            await env.KV.delete(key);
+            await copyMessage(bot_token, chatId, chatId, msg.message_id, { reply_markup: { inline_keyboard: [[{ text: '🚀 Launch Global', callback_data: `confirm_gbroadcast:${state.id}` }, { text: '❌ Cancel', callback_data: `cancel_${state.id}` }]] } });
+            return true;
+        }
+    } catch (err) { await logError(env, ctx, err, "handleSetupState"); }
+    return false;
+}
+
+async function handleBroadcastState(msg, env, ctx, state) {
+    const { bot_token, admin_id, bot_id } = ctx;
+    const bid = `b:${bot_id}:${Date.now()}`;
+    await env.KV.put(bid, JSON.stringify({ from_chat_id: msg.chat.id, message_id: msg.message_id }), { expirationTtl: 3600 });
+    await env.KV.delete(`bot:${bot_id}:broadcast:${admin_id}`);
+
+    const cb = state.type === 'pending' ? `confirm_broadcast:${bid}` : `confirm_cbroadcast:${bid}`;
+    await copyMessage(bot_token, admin_id, msg.chat.id, msg.message_id, { reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: cb }, { text: '❌ Cancel', callback_data: `cancel_${bid}` }]] } });
+    return true;
+}
+
+async function handleReplyFlow(msg, env, ctx) {
+    const { bot_token, admin_id, bot_id } = ctx;
+    const ref = msg.reply_to_message.message_id;
+    const m = await env.D1.prepare('SELECT user_id, user_msg_id FROM messages WHERE admin_msg_id = ? AND bot_id = ?').bind(ref, bot_id).first();
+    const targetId = m?.user_id || msg.reply_to_message.forward_from?.id;
+
+    if (!targetId || targetId.toString() === admin_id) return false;
+
+    // SECURITY: Blocked enforcement. Admin cannot reply to blocked users.
+    const blocked = await env.D1.prepare('SELECT 1 FROM blocked_users WHERE user_id = ? AND bot_id = ?').bind(targetId, bot_id).first();
+    if (blocked) {
+        await sendMessage(bot_token, admin_id, `❌ Cannot reply: User \`${targetId}\` is blocked on this bot.`, { parse_mode: 'MarkdownV2', auto_escape: false });
+        return true;
+    }
+
+    const res = await (await sendMedia(bot_token, targetId, msg, m?.user_msg_id ? { reply_to_message_id: m.user_msg_id } : {})).json();
+    if (res.ok) {
+        const link = `[${escapeMarkdown(msg.reply_to_message.forward_from?.first_name || 'User')}](tg://user?id=${targetId})`;
+        await sendMessage(bot_token, admin_id, MESSAGES.REPLIED_SUCCESS(link), { parse_mode: 'MarkdownV2', auto_escape: false });
+        await env.KV.put(`bot:${bot_id}:last_target:${admin_id}`, targetId.toString(), { expirationTtl: 86400 });
+    } else {
+        await logError(env, ctx, new Error(res.description), "ReplyFlowDeliver");
+        await sendMessage(bot_token, admin_id, `❌ Failed to deliver reply: ${escapeMarkdown(res.description)}`);
+    }
+    return true;
+}
+
+async function handleUserMessage(msg, env, ctx) {
+    const { bot_token, admin_id, bot_id, user_id } = ctx;
+
+    // SECURITY: Blocked enforcement.
+    const blocked = await env.D1.prepare('SELECT 1 FROM blocked_users WHERE user_id = ? AND bot_id = ?').bind(user_id, bot_id).first();
+    if (blocked) return; // Silent discard for blocked users (don't waste resources)
+
+    // SECURITY: Per-user rate limiting (10 msgs per 30s)
+    const rlKey = `rl:${bot_id}:${user_id}:${Math.floor(Date.now() / 30000)}`;
+    const count = parseInt(await env.KV.get(rlKey) || '0');
+    if (count >= 10) {
+        if (count === 10) await sendMessage(bot_token, user_id, MESSAGES.RATE_LIMIT);
+        await env.KV.put(rlKey, (count + 1).toString(), { expirationTtl: 60 });
+        return;
+    }
+    await env.KV.put(rlKey, (count + 1).toString(), { expirationTtl: 60 });
+
+    if (msg.text === '/start') {
+        const welcome = JSON.parse(await env.KV.get(`bot:${bot_id}:config:welcome`) || '[]');
+        const buttons = JSON.parse(await env.KV.get(`bot:${bot_id}:config:buttons`) || '[]');
+        if (welcome.length) {
+            for (let i = 0; i < welcome.length; i++) {
+                const item = welcome[i];
+                const kb = (i === welcome.length - 1) ? buildKeyboard(buttons) : undefined;
+                if (item.type === 'text') await sendMessage(bot_token, user_id, item.content, { reply_markup: kb });
+                else await sendMedia(bot_token, user_id, { [item.type]: item.file_id, caption: item.caption }, { reply_markup: kb });
+            }
+        } else await sendMessage(bot_token, user_id, MESSAGES.START_GREETING, { reply_markup: buildKeyboard(buttons) });
+        return;
+    }
+
+    const fwd = await (await forwardMessage(bot_token, admin_id, msg.chat.id, msg.message_id)).json();
+    if (fwd.ok) {
+        await env.KV.put(`bot:${bot_id}:last_target:${admin_id}`, user_id.toString(), { expirationTtl: 86400 });
+        await env.D1.batch([
+            env.D1.prepare('INSERT INTO messages (admin_msg_id, user_id, user_msg_id, bot_id, created_at) VALUES (?, ?, ?, ?, ?)').bind(fwd.result.message_id, user_id, msg.message_id, bot_id, Math.floor(Date.now() / 1000)),
+            env.D1.prepare('INSERT INTO users (user_id, username, first_name, bot_id) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, bot_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name').bind(user_id, msg.from.username || '', msg.from.first_name || 'User', bot_id)
+        ]);
+
+        const conf = await (await sendMessage(bot_token, user_id, 'ˢᵉⁿᵗ ✅')).json();
+        if (conf.ok) await env.KV.put(`bot:${bot_id}:confirmation:${user_id}`, conf.result.message_id.toString(), { expirationTtl: 86400 });
+    } else {
+        // Only update user profile if forwarding failed (so we still know they exist)
+        await env.D1.prepare('INSERT INTO users (user_id, username, first_name, bot_id) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, bot_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name').bind(user_id, msg.from.username || '', msg.from.first_name || 'User', bot_id).run();
+        await logError(env, ctx, new Error(fwd.description), "UserMsgForward");
+    }
+}
+
+// Utility
+async function scheduled(event, env, ctx) {
+    const cutoff = Math.floor(Date.now() / 1000) - 1296000;
+    await env.D1.prepare('DELETE FROM messages WHERE created_at < ?').bind(cutoff).run();
+}
+
+function escapeMarkdown(text) {
+    if (!text) return '';
+    // Characters that must be escaped in MarkdownV2
+    // Added \ to the list and ensured we don't double escape existing escapes
+    return String(text).replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+}
+
+async function forwardMessage(token, to, from, mid) {
+    return await fetch(`https://api.telegram.org/bot${token}/forwardMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: to, from_chat_id: from, message_id: mid }) });
+}
+
+async function deleteMessage(token, cid, mid) {
+    return await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: cid, message_id: mid }) });
+}
+
+async function answerCallbackQuery(token, qid, text) {
+    return await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callback_query_id: qid, text }) });
+}
+
+async function getChat(token, chatId) {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getChat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId }) });
     return await res.json();
 }

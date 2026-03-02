@@ -11,7 +11,10 @@ binding = "D1"
 database_name = "livegram"
 database_id = "fdd99f10-617e-4de2-b92c-f7508f55998f"
 
+
 [[kv_namespaces]]
 binding = "KV"
 id = "6ecac9744c5343688e34cec596ed6bb5"
-# Final sync comment
+
+[triggers]
+crons = ["0 0 * * *"]
