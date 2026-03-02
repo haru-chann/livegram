@@ -92,10 +92,15 @@ Ensure your Worker is bound to the following:
 - **D1 Database**: Bound as `D1_DB`.
 - **KV Namespace**: Bound as `KV`.
 
-### 5. Deployment
-1. Copy the `worker.js` code to your Worker.
-2. Set your Worker's URL as the webhook for your Main Bot:
-   `https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://<YOUR_WORKER_URL>`
+### 5. Deployment & Webhook Setup
+
+1. **Deploy**: Copy the `worker.js` code to your Cloudflare Worker and click **Deploy**.
+2. **Get Worker URL**: Copy your Worker's public URL (e.g., `https://your-worker.subdomain.workers.dev`).
+3. **Set Main Webhook**: Use the following URL in your browser to link your **Main Bot** to your Worker (replace `<MAIN_BOT_TOKEN>` and `<WORKER_URL>`):
+   ```
+   https://api.telegram.org/bot<MAIN_BOT_TOKEN>/setWebhook?url=<WORKER_URL>
+   ```
+4. **Clone Webhooks**: You don't need to manually set webhooks for clones! When you approve a clone via the `/req` command, the bot **automatically** sets the correct webhook for that clone using your Worker's base URL.
 
 ---
 
