@@ -97,6 +97,7 @@ export default {
             is_super_bot: true,
             request_url: request.url
         };
+        console.log(`[Fetch] Path: ${path}, AdminID: ${ctx.admin_id}, HasToken: ${!!ctx.bot_token}`);
 
         if (path.startsWith('/handle/')) {
             const secretRef = path.split('/')[2];
@@ -941,6 +942,7 @@ async function handleReplyFlow(msg, env, ctx) {
 
 async function handleUserMessage(msg, env, ctx) {
     const { bot_token, admin_id, bot_id, user_id } = ctx;
+    console.log(`[UserMsg] From: ${user_id}, To Admin: ${admin_id}, BotID: ${bot_id}`);
 
     // SECURITY: Blocked enforcement.
     const blocked = await env.D1.prepare('SELECT 1 FROM blocked_users WHERE user_id = ? AND bot_id = ?').bind(user_id, bot_id).first();
@@ -970,7 +972,10 @@ async function handleUserMessage(msg, env, ctx) {
         return;
     }
 
-    const fwd = await (await forwardMessage(bot_token, admin_id, msg.chat.id, msg.message_id)).json();
+    const fwdRes = await forwardMessage(bot_token, admin_id, msg.chat.id, msg.message_id);
+    const fwd = await fwdRes.json();
+    console.log(`[UserMsg] Forward Status: ${fwd.ok}, Desc: ${fwd.description || 'none'}`);
+
     if (fwd.ok) {
         await env.KV.put(`bot:${bot_id}:last_target:${admin_id}`, user_id.toString(), { expirationTtl: 86400 });
         await env.D1.batch([
