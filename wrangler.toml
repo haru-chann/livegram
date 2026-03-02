@@ -1,16 +1,16 @@
-name = "livegram"
+name = "contactbot"
 main = "worker.js"
-compatibility_date = "2024-03-01"
+compatibility_date = "2026-03-01"
 
 [vars]
-# ADMIN_ID = "YourID"
-# BOT_TOKEN = "YourToken"
+# ADMIN_ID = "5754011703"
+# BOT_TOKEN = "8631400541:AAFcyNRbJ6VC_tj2UBEXzLdSt8R1Gfq8xxU"
 
 [[d1_databases]]
-binding = "D1_DB"
-database_name = "livegram-db"
-database_id = "paste-your-db-id-here"
+binding = "D1"
+database_name = "livegram"
+database_id = "fdd99f10-617e-4de2-b92c-f7508f55998f"
 
 [kv_namespaces]
-binding = "KV"
-id = "paste-your-kv-id-here"
+binding = "livegram"
+id = "6ecac9744c5343688e34cec596ed6bb5"
