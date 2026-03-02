@@ -3,8 +3,8 @@ main = "worker.js"
 compatibility_date = "2026-03-01"
 
 [vars]
-# ADMIN_ID = "5754011703"
-# BOT_TOKEN = "8631400541:AAFcyNRbJ6VC_tj2UBEXzLdSt8R1Gfq8xxU"
+ADMIN_ID = "5754011703"
+BOT_TOKEN = "8631400541:AAFcyNRbJ6VC_tj2UBEXzLdSt8R1Gfq8xxU"
 
 [[d1_databases]]
 binding = "D1"

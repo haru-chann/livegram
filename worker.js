@@ -440,16 +440,23 @@ async function sendMessage(token, chatId, text, options = {}) {
         body: JSON.stringify(body)
     });
 
-    const data = await res.clone().json();
-    if (!data.ok && data.description.includes("can't parse entities")) {
+    let data;
+    try {
+        data = await res.clone().json();
+    } catch (e) {
+        if (!res.ok) throw new Error(`Telegram API returned non-JSON error (${res.status}): ${res.statusText}`);
+        return res; // OK but not JSON? Rare but let's be safe
+    }
+
+    if (!data.ok && data.description?.includes("can't parse entities")) {
         // Fallback: strip all escaping and send as plain text
         console.warn(`MarkdownV2 parsing failed, falling back to plain text for: ${text.substring(0, 50)}...`);
-        delete body.parse_mode;
-        body.text = text.replace(/\\([_*[\]()~`>#+\-=|{}.!])/g, '$1');
+        const bodyFallback = { ...body, parse_mode: undefined };
+        bodyFallback.text = text.replace(/\\([_*[\]()~`>#+\-=|{}.!])/g, '$1');
         res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify(bodyFallback)
         });
     }
     return res;
@@ -506,8 +513,12 @@ async function sendMedia(token, chatId, msg, options = {}) {
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`Telegram API error: ${errorData.description || response.statusText}`);
+            let errorDesc = response.statusText;
+            try {
+                const errorData = await response.json();
+                errorDesc = errorData.description || errorDesc;
+            } catch (e) { /* non-json error */ }
+            throw new Error(`Telegram API error: ${errorDesc}`);
         }
     } catch (err) {
         if (err.message.includes("can't parse entities") && body.parse_mode === 'MarkdownV2') {
@@ -527,8 +538,12 @@ async function sendMedia(token, chatId, msg, options = {}) {
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(`Telegram API error (fallback): ${errorData.description || response.statusText}`);
+                let errorDesc = response.statusText;
+                try {
+                    const errorData = await response.json();
+                    errorDesc = errorData.description || errorDesc;
+                } catch (e) { /* non-json error */ }
+                throw new Error(`Telegram API error (fallback): ${errorDesc}`);
             }
         } else {
             throw err;
