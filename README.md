@@ -87,8 +87,10 @@ Add these variables to your Worker's `Settings > Variables`:
 - `BOT_TOKEN`: The API token for your **Main Bot** (from @BotFather).
 - `ADMIN_ID`: Your Telegram User ID (Super Admin).
 
-### 4. KV Binding
-Bind a KV Namespace to your worker with the name `KV`.
+### 4. Required KV & D1 Bindings
+Ensure your Worker is bound to the following:
+- **D1 Database**: Bound as `D1_DB`.
+- **KV Namespace**: Bound as `KV`.
 
 ### 5. Deployment
 1. Copy the `worker.js` code to your Worker.
