@@ -121,8 +121,18 @@ Ensure your Worker is bound to the following:
 
 ---
 
-## 💡 Pro Tip: Quick-Reply
-Simply type `!. Your message` to reply to the last person who messaged you. It's the fastest way to handle multiple conversations!
+## �️ Troubleshooting
+
+- **Webhook Error**: If the bot doesn't respond, verify your webhook is set correctly by visiting:  
+  `https://api.telegram.org/bot<TOKEN>/getWebhookInfo`
+- **D1_ERROR**: Ensure you've run the migration script to set the composite primary keys `(user_id, bot_id)`.
+- **Markdown Fail**: If a message looks raw (with backslashes), the bot likely hit a parsing error and fell back to plain text for safety. Check for unclosed `*` or `_` in your custom welcome messages.
+
+---
+
+## 📜 License
+
+This project is licensed under the **MIT License**. You are free to use, modify, and distribute it for personal or commercial projects.
 
 ---
 
