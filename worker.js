@@ -6,7 +6,7 @@ const MESSAGES = {
     RATE_LIMIT: "⚠️ <b>Too many messages!</b> Please wait 1 minute before sending more.",
     NO_LAST_TARGET: "❌ <b>No last target found.</b> Reply to a user first to set one.",
     QUICK_REPLY_EMPTY: "❌ Please provide a message after !.",
-    QUICK_REPLY_SENT: (targetId) => `✅ Message sent to user <code>${targetId}</code>`,
+    QUICK_REPLY_SENT: (name, targetId) => `✅ Replied to [${escapeMarkdown(name)}](tg://user?id=${targetId})`,
     STEP_1_WELCOME: "<b>Step 1:</b> Send the first message (Text, Photo, Sticker, GIF, etc.)",
     STEP_2_WELCOME: "<b>Step 2:</b> Send the second message (Text, Photo, Sticker, GIF, etc.)",
     WELCOME_SAVE_CONFIRM: "Confirm saving this sequence?",
@@ -40,7 +40,7 @@ const MESSAGES = {
     CHANNEL_REMOVED: "✅ <b>Linked channel removed.</b>",
     STATUS_TITLE: "ℹ️ <b>Bot Status</b>",
     STATUS_FOOTER: "<i>Command menu synchronized for this bot</i>",
-    REPLIED_SUCCESS: (name, id) => `✅ <b>Replied to ${name}</b> (<code>${id}</code>)`,
+    REPLIED_SUCCESS: (name, id) => `✅ Replied to [${escapeMarkdown(name)}](tg://user?id=${id})`,
     USER_UNREACHABLE: (id, desc) => `User <code>${id}</code> unreachable: ${desc}`,
     BROADCAST_REPORT: (success, fail) => `Broadcast sent to <b>${success}</b> users, failed for <b>${fail}</b> users.`,
     FORWARD_REPORT: (success, fail) => `📢 <b>Auto-Forward Report</b>\n✅ Sent to <b>${success}</b> users\n❌ Failed for <b>${fail}</b> users`,
@@ -80,7 +80,24 @@ async function logError(env, ctx, error, context = "General") {
     // SYSTEM ERRORS ONLY FOR SUPER ADMIN
     if (ctx?.super_admin_id && env.BOT_TOKEN) {
         // Filter out expected/common noise
-        const silentErrors = ["chat not found", "bot was blocked by the user", "user is deactivated", "can't parse entities", "message is not modified", "message to forward not found"];
+        const silentErrors = [
+            "chat not found",
+            "bot was blocked by the user",
+            "user is deactivated",
+            "can't parse entities",
+            "message is not modified",
+            "message to forward not found",
+            "query is too old",
+            "message is not found",
+            "message to delete not found",
+            "message can't be deleted",
+            "user_id_invalid",
+            "peer_id_invalid",
+            "bot was kicked",
+            "not enough rights",
+            "message to be replied not found",
+            "telegram api failure"
+        ];
         if (silentErrors.some(se => errorMsg.toLowerCase().includes(se))) return;
 
         try {
@@ -228,9 +245,13 @@ async function handleMessage(msg, env, ctx) {
         if (msg.caption) quickMsg.caption = content;
 
         try {
-            const mediaRes = await sendMedia(bot_token, targetId, quickMsg);
-            const res = await mediaRes.json();
-            if (res.ok) await sendMessage(bot_token, msg.chat.id, MESSAGES.QUICK_REPLY_SENT(targetId), { parse_mode: 'MarkdownV2', auto_escape: false });
+            const res = await sendMedia(bot_token, targetId, quickMsg);
+            if (res.ok) {
+                const userResults = await queryDB(env, 'SELECT first_name, username FROM users WHERE user_id = ? AND bot_id = ?', [targetId, bot_id]);
+                const firstName = userResults.results[0]?.first_name || 'User';
+                const profileLink = `[${escapeMarkdown(firstName)}](tg://user?id=${targetId})`;
+                await sendMessage(bot_token, msg.chat.id, `✅ Replied to ${profileLink}`, { parse_mode: 'MarkdownV2' });
+            }
         } catch (e) {
             console.error(`[QuickReply Error] ${e.message}`);
             await logError(env, ctx, e, "QuickReply");
@@ -1229,14 +1250,24 @@ async function handleReplyFlow(msg, env, ctx) {
         return true;
     }
 
-    const res = await sendMedia(bot_token, targetId, msg, m?.user_msg_id ? { reply_to_message_id: m.user_msg_id } : {});
+    let res = await sendMedia(bot_token, targetId, msg, m?.user_msg_id ? { reply_to_message_id: m.user_msg_id } : {});
+
+    // Retry without reply_to_message_id if failure is due to missing original message
+    if (!res.ok && res.description?.toLowerCase().includes("message to be replied not found")) {
+        console.log(`[ReplyFlow] Retrying without reply_to_message_id for user ${targetId}`);
+        res = await sendMedia(bot_token, targetId, msg, {});
+    }
+
     if (res.ok) {
-        const name = msg.reply_to_message.forward_from?.first_name || 'User';
-        await sendMessage(bot_token, admin_id, MESSAGES.REPLIED_SUCCESS(name, targetId), { parse_mode: 'HTML', auto_delete: true, ctx });
+        const userResults = await queryDB(env, 'SELECT first_name, username FROM users WHERE user_id = ? AND bot_id = ?', [targetId, bot_id]);
+        const firstName = userResults.results[0]?.first_name || msg.reply_to_message.forward_from?.first_name || 'User';
+        const profileLink = `[${escapeMarkdown(firstName)}](tg://user?id=${targetId})`;
+
+        await sendMessage(bot_token, adminId, `✅ Replied to ${profileLink}`, { parse_mode: 'MarkdownV2', auto_delete: true, ctx });
         await env.KV.put(`reply_target:${bot_id}:${admin_id}`, targetId.toString(), { expirationTtl: 86400 });
     } else {
         await logError(env, ctx, new Error(res.description), "ReplyFlowDeliver");
-        await sendMessage(bot_token, admin_id, `❌ <b>Failed to deliver reply:</b> ${res.description}`, { parse_mode: 'HTML' });
+        await sendMessage(bot_token, adminId, `❌ <b>Failed to deliver reply:</b> ${res.description}`, { parse_mode: 'HTML' });
     }
     return true;
 }

@@ -2,12 +2,14 @@
   "name": "livegram",
   "version": "1.0.0",
   "description": "Multi-tenant Telegram bot cloner",
-  "main": "worker.js",
+  "main": "src/index.js",
   "scripts": {
-    "deploy": "wrangler deploy",
+    "build": "esbuild src/index.js --bundle --format=esm --outfile=public/_worker.js",
+    "deploy": "npm run build && wrangler pages deploy public --project-name livegram",
     "dev": "wrangler dev"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
     "wrangler": "^4.69.0"
   }
 }
