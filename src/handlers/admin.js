@@ -177,6 +177,9 @@ export async function handleAdminCommands(msg, env, ctx, { command, fullCommand 
                 if (cacheRes) {
                     try { m = await cacheRes.json(); } catch (e) { }
                 }
+                if (!m) {
+                    m = await queryDBFirst(env, 'SELECT user_id, user_msg_id FROM messages WHERE admin_msg_id = ? AND bot_id = ?', [ref, bot_id]);
+                }
                 targetId = m?.user_id || msg.reply_to_message.forward_from?.id;
             }
 
@@ -200,6 +203,9 @@ export async function handleAdminCommands(msg, env, ctx, { command, fullCommand 
                 let m = null;
                 if (cacheRes) {
                     try { m = await cacheRes.json(); } catch (e) { }
+                }
+                if (!m) {
+                    m = await queryDBFirst(env, 'SELECT user_id, user_msg_id FROM messages WHERE admin_msg_id = ? AND bot_id = ?', [ref, bot_id]);
                 }
                 targetId = m?.user_id || msg.reply_to_message.forward_from?.id;
             }

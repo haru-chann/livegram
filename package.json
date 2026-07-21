@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "build": "esbuild src/index.js --bundle --format=esm --outfile=public/_worker.js",
-    "deploy": "npm run build && wrangler pages deploy public --project-name livegram",
+    "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
   "devDependencies": {
